@@ -30,6 +30,10 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "evidence" / "raw"
 
+# A real Bing response, committed so `--backend replay` works from a clean clone.
+REFERENCE_CAPTURE = (Path(__file__).resolve().parent.parent / "spike"
+                     / "reference-capture.raw")
+
 CHALLENGE_MARKERS = (
     "verify you are human", "one last step", "unusual traffic",
     "are you a robot", "smartcaptcha", "recaptcha", "please solve the challenge",
@@ -285,10 +289,14 @@ class Replay:
         if source is None:
             saved = sorted(RAW_DIR.glob("bing_scripted-*.raw"),
                            key=lambda p: p.stat().st_mtime, reverse=True)
-            if not saved:
+            # Fall back to the committed capture so a fresh clone can exercise the
+            # pipeline even when the live search is challenging requests. Without this,
+            # being rate-limited leaves a reviewer with nothing to run at all.
+            source = saved[0] if saved else REFERENCE_CAPTURE
+            if not source.exists():
                 raise SearchUnavailable(
-                    f"no saved response to replay under {RAW_DIR}")
-            source = saved[0]
+                    f"no saved response under {RAW_DIR} and no reference capture "
+                    f"at {REFERENCE_CAPTURE}")
         if not source.exists():
             raise SearchUnavailable(f"no such saved response: {source}")
 
