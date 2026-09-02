@@ -138,7 +138,7 @@ matches, not for attempts.
 ## Tests
 
 ```bash
-py -m pytest          # 170 tests
+py -m pytest          # 171 tests
 py preflight.py       # environment, models, chain, and repo state
 ```
 
@@ -211,7 +211,7 @@ contracts/AttestationRegistry.sol
 scripts/calibrate.py    threshold measurement
 scripts/fetch_models.py ONNX weights, SHA-256 verified
 preflight.py            setup and recording sanity checks
-tests/                  170 tests, tiered by what they require
+tests/                  171 tests, tiered by what they require
 spike/FINDINGS.md       day-1 search viability study
 ```
 
