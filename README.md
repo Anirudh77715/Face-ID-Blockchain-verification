@@ -61,6 +61,12 @@ against the query embedding. Only candidates clearing the cosine threshold are a
 and **the score is recorded either way** — rejects included, so the bundle shows what was
 considered and dismissed rather than only what survived.
 
+Candidates carry a second image URL. Social platforms block hotlinking of their own CDN,
+so for exactly the results this task cares about, the primary URL is the one that will not
+fetch — every Instagram and Facebook hit scored `download_failed` and nothing could be
+verified. The search engine's own copy is smaller but reachable, and a low-resolution face
+still embeds. The bundle records the URL actually fetched, not the one tried first.
+
 The raw search response is persisted and hashed into the commitment. That hash is what
 makes "this was a genuine search, not a hardcoded result" checkable by someone who did not
 watch it run.
@@ -145,7 +151,7 @@ cp .env.example .env        # .env is gitignored
 
 | Variable | Needed for | Notes |
 |---|---|---|
-| `SERPAPI_KEY` | `--backend serpapi` | Free tier, 100 searches/month, no payment |
+| `SERPAPI_KEY` | `--backend serpapi` | Free tier, 100 searches/month, no payment. Needs `--image-url` too: a publicly reachable copy of the image. This backend will not upload your photo anywhere on your behalf. |
 | `PRIVATE_KEY` | `--chain sepolia` | **Burner wallet only** — testnet funds, nothing real |
 | `BASE_SEPOLIA_RPC` | optional | Defaults to `https://sepolia.base.org` |
 

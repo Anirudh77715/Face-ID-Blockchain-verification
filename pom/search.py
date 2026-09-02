@@ -67,6 +67,12 @@ class Candidate:
     page_url: str
     image_url: str
     social: bool
+    # A second URL for the same image, tried when the first download fails. Social
+    # platforms block hotlinking of their own CDN, so for exactly the candidates this
+    # task cares about, the primary URL is the one that will not fetch. Search engines
+    # also host a copy; that copy is smaller, but a rejected candidate scores nothing at
+    # all, and a low-resolution face still embeds.
+    image_fallback: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -244,22 +250,50 @@ class SerpApi:
         queried_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         resp = requests.get(
             "https://serpapi.com/search.json",
-            params={"engine": "google_lens", "url": image_url, "api_key": self.api_key},
+            params={
+                "engine": "google_lens",
+                "url": image_url,
+                "api_key": self.api_key,
+                # Required. Without it Google Lens answers on its AI-overview tab and the
+                # response carries no matches at all - the request succeeds, the parse
+                # finds nothing, and it reads as "this face is not online".
+                "type": "visual_matches",
+            },
             timeout=60,
         )
         resp.raise_for_status()
         path, digest = _persist(self.name, resp.content)
         data = resp.json()
 
-        out = []
-        for m in data.get("visual_matches", []):
-            link = m.get("link", "")
-            if link:
+        if data.get("error"):
+            raise SearchUnavailable(f"serpapi: {data['error']}")
+
+        out, seen = [], set()
+        # exact_matches first: a duplicate of the query image is a stronger signal than
+        # something merely similar, and this task's input is a photo the subject posted.
+        for field in ("exact_matches", "visual_matches"):
+            for m in data.get(field, []) or []:
+                link = m.get("link", "")
+                if not link or link in seen:
+                    continue
+                seen.add(link)
+                primary = m.get("original") or m.get("image") or ""
+                thumb = m.get("thumbnail") or ""
                 out.append(Candidate(
                     page_url=link,
-                    image_url=m.get("thumbnail", "") or m.get("image", ""),
+                    image_url=primary or thumb,
                     social=is_social(link),
+                    image_fallback=thumb if primary else "",
                 ))
+
+        if not out:
+            available = [k for k, v in data.items() if isinstance(v, list) and v]
+            raise SearchUnavailable(
+                "serpapi returned no matches. "
+                f"Response carried: {available or 'no result lists'}. "
+                "Google Lens sometimes answers only on its AI-overview tab for an image."
+            )
+
         return SearchResponse(self.name, queried_at, str(path), digest, out)
 
 

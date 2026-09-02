@@ -79,12 +79,25 @@ def verify(
                                        similarity=None, accepted=False))
             continue
 
-        try:
-            data = _fetch(cand.image_url)
-        except Exception as e:
+        data, fetch_error, used_url = None, None, cand.image_url
+        for url in (cand.image_url, cand.image_fallback):
+            if not url:
+                continue
+            try:
+                data = _fetch(url)
+                used_url = url
+                break
+            except Exception as e:
+                fetch_error = f"{type(e).__name__}: {e}"
+
+        if data is None:
             results.append(MatchResult(**base, status="download_failed", similarity=None,
-                                       accepted=False, note=f"{type(e).__name__}: {e}"[:160]))
+                                       accepted=False, note=(fetch_error or "")[:160]))
             continue
+
+        # Record the URL actually fetched, not the one first attempted - the bundle
+        # should say where the compared bytes came from.
+        base["image_url"] = used_url
 
         try:
             scan = encoder.scan(data)

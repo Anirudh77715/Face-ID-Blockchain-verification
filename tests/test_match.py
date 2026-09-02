@@ -181,3 +181,61 @@ def test_best_ignores_unscored_results():
 def test_match_result_serialises():
     d = mk(0.5, True, True).as_dict()
     assert set(d) >= {"page_url", "similarity", "accepted", "status", "social"}
+
+
+# ------------------------------------------------------- hotlink-blocked social CDNs
+
+def test_falls_back_to_the_second_url_when_the_first_is_blocked(stub_fetch):
+    """Social platforms block hotlinking of their own CDN, so for exactly the candidates
+    this task cares about the primary URL is the one that will not fetch. Without a
+    fallback, every social hit scored `download_failed` and nothing could be verified."""
+    stub_fetch["https://tbn.gstatic/x.jpg"] = b"A"        # only the mirror is fetchable
+    enc = FakeEncoder({b"A": 0.77})
+    c = Candidate(page_url="https://instagram.com/p/1",
+                  image_url="https://scontent.cdninstagram.com/blocked.jpg",
+                  social=True,
+                  image_fallback="https://tbn.gstatic/x.jpg")
+    r = verify(enc, None, [c], threshold=0.363)
+    assert r[0].status == "ok"
+    assert r[0].accepted
+
+
+def test_the_url_actually_fetched_is_the_one_recorded(stub_fetch):
+    """The bundle should say where the compared bytes came from, not which URL was
+    tried first."""
+    stub_fetch["https://tbn.gstatic/x.jpg"] = b"A"
+    enc = FakeEncoder({b"A": 0.77})
+    c = Candidate(page_url="https://instagram.com/p/1",
+                  image_url="https://blocked.example/x.jpg",
+                  social=True,
+                  image_fallback="https://tbn.gstatic/x.jpg")
+    assert verify(enc, None, [c], threshold=0.363)[0].image_url == \
+        "https://tbn.gstatic/x.jpg"
+
+
+def test_both_urls_failing_is_still_a_download_failure(stub_fetch):
+    c = Candidate(page_url="https://instagram.com/p/1",
+                  image_url="https://blocked.example/a.jpg",
+                  social=True,
+                  image_fallback="https://also-blocked.example/b.jpg")
+    r = verify(FakeEncoder({}), None, [c], threshold=0.363)
+    assert r[0].status == "download_failed"
+    assert r[0].note
+
+
+def test_primary_is_preferred_when_both_work(stub_fetch):
+    """The fallback is a smaller copy, so it must not be used when the original fetches."""
+    stub_fetch["https://good.example/big.jpg"] = b"BIG"
+    stub_fetch["https://tbn.gstatic/small.jpg"] = b"SMALL"
+    enc = FakeEncoder({b"BIG": 0.9, b"SMALL": 0.4})
+    c = Candidate(page_url="https://x.com/1", image_url="https://good.example/big.jpg",
+                  social=True, image_fallback="https://tbn.gstatic/small.jpg")
+    r = verify(enc, None, [c], threshold=0.363)
+    assert r[0].image_url == "https://good.example/big.jpg"
+    assert r[0].similarity == pytest.approx(0.9)
+
+
+def test_candidate_without_a_fallback_still_works(stub_fetch):
+    stub_fetch["https://i/a.jpg"] = b"A"
+    r = verify(FakeEncoder({b"A": 0.8}), None, [cand()], threshold=0.363)
+    assert r[0].status == "ok"
