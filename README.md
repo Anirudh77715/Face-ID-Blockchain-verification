@@ -135,6 +135,24 @@ evidence the threshold is not obviously wrong — not as a benchmark result. Rep
 Exit 2 matters. A run that finds nothing leaves no attestation behind — the record is for
 matches, not for attempts.
 
+## Configuration
+
+Everything above runs with no credentials. Two optional keys unlock the rest:
+
+```bash
+cp .env.example .env        # .env is gitignored
+```
+
+| Variable | Needed for | Notes |
+|---|---|---|
+| `SERPAPI_KEY` | `--backend serpapi` | Free tier, 100 searches/month, no payment |
+| `PRIVATE_KEY` | `--chain sepolia` | **Burner wallet only** — testnet funds, nothing real |
+| `BASE_SEPOLIA_RPC` | optional | Defaults to `https://sepolia.base.org` |
+
+`.env` is loaded automatically; real environment variables take precedence, so CI can set
+them properly without a stale file overriding. `py preflight.py` reports which are
+configured — presence and length only, never the value.
+
 ## Tests
 
 ```bash

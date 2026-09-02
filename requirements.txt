@@ -3,3 +3,4 @@ numpy>=2.0
 requests>=2.32
 playwright>=1.47
 web3>=7.0
+python-dotenv>=1.0

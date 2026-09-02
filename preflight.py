@@ -136,6 +136,45 @@ def check_reference_capture(r: Report) -> None:
                "the Bing layout may have changed; re-capture")
 
 
+def check_secrets(r: Report) -> None:
+    """Report which optional credentials are configured.
+
+    Presence only - never the value, and never a prefix of it. A preflight that echoes
+    part of a key trains people to paste its output into chats and issues.
+    """
+    import os
+
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        r.ok(".env", "present (gitignored)")
+    else:
+        r.warn("no .env file",
+               "cp .env.example .env - only needed for serpapi or Base Sepolia")
+
+    for name, needed_for in (
+        ("SERPAPI_KEY", "--backend serpapi"),
+        ("PRIVATE_KEY", "--chain sepolia"),
+    ):
+        value = os.environ.get(name, "").strip()
+        if not value:
+            r.warn(f"{name} not set", f"optional; only needed for {needed_for}")
+            continue
+
+        # Validate before reporting it as usable, so a malformed key is not announced
+        # as a pass on one line and a failure on the next.
+        if name == "PRIVATE_KEY" and not _is_hex_key(value):
+            r.fail("PRIVATE_KEY is set but is not a 32-byte hex key",
+                   "expected 64 hex characters, with or without a 0x prefix")
+            continue
+
+        r.ok(name, f"set ({len(value)} chars) - enables {needed_for}")
+
+
+def _is_hex_key(value: str) -> bool:
+    cleaned = value.removeprefix("0x")
+    return len(cleaned) == 64 and all(c in "0123456789abcdefABCDEF" for c in cleaned)
+
+
 def check_contract(r: Report) -> None:
     artifact = (ROOT / "artifacts" / "contracts" / "AttestationRegistry.sol"
                 / "AttestationRegistry.json")
@@ -248,6 +287,9 @@ def main() -> int:
     section("search")
     check_playwright(r)
     check_reference_capture(r)
+
+    section("secrets")
+    check_secrets(r)
 
     section("chain")
     check_contract(r)
