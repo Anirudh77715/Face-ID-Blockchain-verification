@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
 from pom.search import (
     CHALLENGE_MARKERS,
     BingScripted,
+    Candidate,
     Replay,
+    SearchBlocked,
     SearchResponse,
     SearchUnavailable,
     is_social,
@@ -183,3 +186,100 @@ def test_replay_falls_back_to_the_reference_capture(tmp_path, monkeypatch):
     monkeypatch.setattr(S, "RAW_DIR", empty)
     response = Replay().search(tmp_path / "unused.jpg")
     assert response.candidates, "a clean clone must still be able to run"
+
+
+# ------------------------------------------------------------------ auto chain
+
+class _Stub:
+    def __init__(self, name, result=None, error=None):
+        self.name = name
+        self._result = result
+        self._error = error
+
+    def search(self, image_path, **kw):
+        if self._error:
+            raise self._error
+        return self._result
+
+
+def _response(provider="stub"):
+    return SearchResponse(provider, "now", "p", "h",
+                          [Candidate("https://x.com/1", "https://i/1.jpg", True)])
+
+
+def test_auto_returns_the_first_backend_that_works(monkeypatch):
+    from pom.search import Auto
+    auto = Auto()
+    good = _response("second")
+    monkeypatch.setattr(auto, "_chain", lambda url: iter([
+        _Stub("first", error=SearchBlocked("challenged")),
+        _Stub("second", result=good),
+        _Stub("third", result=_response("third")),
+    ]))
+    assert auto.search(Path("x.jpg")) is good
+    assert auto.attempts == ["first", "second"], "must stop at the first success"
+
+
+def test_auto_records_what_it_tried(monkeypatch):
+    from pom.search import Auto
+    auto = Auto()
+    monkeypatch.setattr(auto, "_chain", lambda url: iter([
+        _Stub("a", error=SearchUnavailable("no key")),
+        _Stub("b", result=_response("b")),
+    ]))
+    auto.search(Path("x.jpg"))
+    assert auto.attempts == ["a", "b"]
+
+
+def test_auto_survives_a_backend_raising_something_unexpected(monkeypatch):
+    """One backend faulting must not end the run while others remain."""
+    from pom.search import Auto
+    auto = Auto()
+    good = _response("ok")
+    monkeypatch.setattr(auto, "_chain", lambda url: iter([
+        _Stub("boom", error=RuntimeError("kaboom")),
+        _Stub("ok", result=good),
+    ]))
+    assert auto.search(Path("x.jpg")) is good
+
+
+def test_auto_reports_every_failure_when_all_fail(monkeypatch):
+    from pom.search import Auto
+    auto = Auto()
+    monkeypatch.setattr(auto, "_chain", lambda url: iter([
+        _Stub("one", error=SearchBlocked("challenged")),
+        _Stub("two", error=SearchUnavailable("no key")),
+    ]))
+    with pytest.raises(SearchBlocked) as e:
+        auto.search(Path("x.jpg"))
+    message = str(e.value)
+    assert "one" in message and "two" in message
+    assert "bypass" in message.lower(), "must restate that nothing was evaded"
+
+
+def test_auto_skips_url_backends_without_an_image_url():
+    from pom.search import Auto
+    names = [b.name for b in Auto()._chain(None)]
+    assert "bing_url" not in names
+    assert "bing_scripted" in names
+
+
+def test_auto_prefers_the_url_backend_when_a_url_is_given():
+    from pom.search import Auto
+    names = [b.name for b in Auto()._chain("https://example.com/me.jpg")]
+    assert names[0] == "bing_url", (
+        "the URL endpoint needs no upload and kept working while uploads were challenged")
+
+
+def test_auto_only_reaches_for_serpapi_when_a_key_exists(monkeypatch):
+    from pom.search import Auto
+    monkeypatch.delenv("SERPAPI_KEY", raising=False)
+    assert "serpapi" not in [b.name for b in Auto()._chain("https://e.com/a.jpg")]
+    monkeypatch.setenv("SERPAPI_KEY", "x")
+    assert "serpapi" in [b.name for b in Auto()._chain("https://e.com/a.jpg")]
+
+
+def test_bing_url_requires_an_image_url(tmp_path):
+    from pom.search import BingUrl
+    with pytest.raises(SearchUnavailable, match="image-url"):
+        BingUrl().search(tmp_path / "x.jpg")

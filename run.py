@@ -34,11 +34,16 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--image", required=True, type=Path)
     ap.add_argument("--chain", default="local", choices=("local", "sepolia"))
-    ap.add_argument("--backend", default="bing_scripted",
-                    choices=("bing_scripted", "serpapi", "replay"),
-                    help="replay re-parses a saved response for development; it performs "
-                         "no query and is recorded as such in the evidence")
-    ap.add_argument("--image-url", help="public URL of the image (serpapi backend only)")
+    ap.add_argument("--backend", default="auto",
+                    choices=("auto", "bing_url", "bing_scripted", "serpapi", "replay"),
+                    help="auto tries the no-key backends in order and uses the first that "
+                         "returns results; replay re-parses a saved response for "
+                         "development, performs no query, and is recorded as such")
+    ap.add_argument("--image-url",
+                    help="a publicly reachable copy of the image. Enables the URL-based "
+                         "backends, which need no key and no upload. The photo for this "
+                         "task is one you have posted publicly, so this URL already "
+                         "exists.")
     ap.add_argument("--threshold", type=float, default=COSINE_SAME_IDENTITY)
     ap.add_argument("--limit", type=int, default=12, help="candidates to verify")
     ap.add_argument("--headed", action="store_true",
@@ -71,7 +76,8 @@ def main() -> int:
     # -------------------------------------------------------------- 2. search
     rule("2. REVERSE IMAGE SEARCH")
     backend = (get_backend(args.backend, headed=args.headed)
-               if args.backend == "bing_scripted" else get_backend(args.backend))
+               if args.backend in ("auto", "bing_url", "bing_scripted")
+               else get_backend(args.backend))
     if backend.name == "replay":
         print("  [33mREPLAY - no live query; this is a development run[0m")
     print(f"  provider    {backend.name}")
@@ -83,6 +89,9 @@ def main() -> int:
     except SearchUnavailable as e:
         print(f"\n  UNAVAILABLE: {e}", file=sys.stderr)
         return 3
+    if getattr(backend, "attempts", None) and len(backend.attempts) > 1:
+        print(f"  tried       {' -> '.join(backend.attempts)}")
+    print(f"  resolved by {response.provider}")
     print(f"  candidates  {len(response.candidates)} "
           f"({len(response.social_candidates)} on social platforms)")
     print(f"  raw saved   {response.raw_path}")

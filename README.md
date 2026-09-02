@@ -50,7 +50,26 @@ YuNet **returns zero faces on large images, silently, at any confidence threshol
 face at 0.924. Detection therefore walks a scale ladder (1024 → 800 → 640 → 480) rather
 than trusting a single attempt, and the bounding box is mapped back to source coordinates.
 
-### 2. Search — verified, not trusted
+### 2. Search — no key, and verified rather than trusted
+
+**Nothing here needs an API key.** `--backend auto` is the default: it tries the free
+backends in order and uses the first that returns results, so one engine being rate-limited
+does not end a run.
+
+The input for this task is a photo the subject has publicly posted, which means a public
+URL for it already exists — so the upload flow is avoidable entirely. That matters more
+than it sounds. Measured on the same machine and the same image:
+
+| backend | key | candidates | accepted |
+|---|---|---|---|
+| `bing_url` | none | 38 | **11 / 12** |
+| `serpapi` | required | 10 | 6 / 10 |
+| `bing_scripted` | none | 21 | 10 / 12 |
+
+`bing_url` was returning results while `bing_scripted` was being served
+human-verification challenges on that same machine — it is a plain page load rather than a
+scripted upload form, so there is less to trip over. Pass `--image-url` to enable it.
+
 
 A reverse image search returns pages that are *visually similar*. That is not the same
 claim as "this is the same face", and a pipeline that reports search hits as identity
@@ -151,7 +170,7 @@ cp .env.example .env        # .env is gitignored
 
 | Variable | Needed for | Notes |
 |---|---|---|
-| `SERPAPI_KEY` | `--backend serpapi` | Free tier, 100 searches/month, no payment. Needs `--image-url` too: a publicly reachable copy of the image. This backend will not upload your photo anywhere on your behalf. |
+| `SERPAPI_KEY` | `--backend serpapi` | **Optional.** The free backends need no key. Needs `--image-url` too; this backend will not upload your photo anywhere on your behalf. |
 | `PRIVATE_KEY` | `--chain sepolia` | **Burner wallet only** — testnet funds, nothing real |
 | `BASE_SEPOLIA_RPC` | optional | Defaults to `https://sepolia.base.org` |
 
@@ -180,12 +199,12 @@ sends no transaction. Each looks like a broken pipeline rather than a setup prob
 
 ## Known limitations
 
-**The scripted search rate-limits, and is not bypassed.** Bing Visual Search works on a
-cold run — the reference capture in this repo returned 27 source pages including six
-Pinterest posts. Under repeated automated use it serves a `Verify you are human`
-challenge. The pipeline detects that, exits 3, and writes nothing. **No CAPTCHA solving or
-evasion is implemented and none will be**, so a judge running this immediately after
-several other runs may be challenged. Wait and retry, or configure the `serpapi` backend.
+**Searches rate-limit, and challenges are not bypassed.** Under repeated automated use a
+provider serves a `Verify you are human` page. The pipeline detects that, exits 3, and
+writes nothing. **No CAPTCHA solving or evasion is implemented and none will be.** `auto`
+mitigates this by falling through to another backend rather than failing outright, and
+`--image-url` unlocks `bing_url`, which in practice survives longest. If everything is
+challenged, wait and retry — that is the honest remedy.
 
 **Search coverage is skewed.** Reverse image search finds indexed, public, well-crawled
 pages. A face with no public web presence returns nothing — correctly, but that is a

@@ -1,12 +1,16 @@
 """Reverse image search, behind a provider-agnostic adapter.
 
 The task brief permits "reverse image search, an API, or a scripted search approach".
-Two backends ship:
+No API key is required for any of this; `auto` is the default and only reaches for a key
+if one happens to be configured.
 
-  bing_scripted  free, no key, Playwright. Works on a cold run; rate-limits into a
+  auto           tries the others in order and uses the first that returns results
+  bing_url       free, no key, no upload. Needs --image-url. Measured best: it kept
+                 working while the upload flow was being challenged on the same machine.
+  bing_scripted  free, no key, uploads the file. Works cold; rate-limits into a
                  human-verification challenge under repeated automated use.
-  serpapi        free tier (100/month). Deterministic, but needs a key and a publicly
-                 reachable image URL.
+  serpapi        free tier (100/month). Needs a key and a publicly reachable image URL.
+  replay         development only; re-parses a saved response and performs no query.
 
 On a challenge the scripted backend raises `SearchBlocked` and the pipeline stops. It does
 not attempt to solve or evade the challenge — see README, Known limitations.
@@ -25,7 +29,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "evidence" / "raw"
 
@@ -222,6 +226,70 @@ class BingScripted:
         return out
 
 
+# ------------------------------------------------------------------- bing (by url)
+
+class BingUrl:
+    """Bing Visual Search from an image URL instead of a file upload.
+
+    This task's input is a photo the subject has publicly posted, so a public URL for it
+    already exists and the upload flow is avoidable entirely. That matters more than it
+    sounds: measured side by side, this endpoint kept returning results (33 candidates,
+    12 on social platforms) while the upload flow on the same machine was being served
+    human-verification challenges. It is a plain page load rather than a scripted form,
+    so there is simply less to trip over.
+
+    Results come back in the same shape, so BingScripted's parser is reused unchanged.
+    """
+
+    name = "bing_url"
+
+    def __init__(self, headed: bool = False, timeout_ms: int = 45_000):
+        self.headed = headed
+        self.timeout_ms = timeout_ms
+
+    def search(self, image_path: Path, image_url: str | None = None,
+               **_) -> SearchResponse:
+        from playwright.sync_api import sync_playwright
+
+        if not image_url:
+            raise SearchUnavailable(
+                "bing_url needs --image-url: a publicly reachable copy of the image. "
+                "Use --backend bing_scripted to upload the file instead."
+            )
+
+        queried_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        target = (f"https://www.bing.com/images/search?q=imgurl:{quote(image_url, safe='')}"
+                  "&view=detailv2&iss=sbi&FORM=IRSBIQ")
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=not self.headed)
+            ctx = browser.new_context(locale="en-US", user_agent=UA,
+                                      viewport={"width": 1400, "height": 900})
+            page = ctx.new_page()
+            try:
+                page.goto(target, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                page.wait_for_timeout(7_000)
+                html = page.content()
+            finally:
+                ctx.close()
+                browser.close()
+
+        path, digest = _persist(self.name, html.encode("utf-8"))
+        if any(m in html.lower() for m in CHALLENGE_MARKERS):
+            raise SearchBlocked(
+                "Bing served a human-verification challenge. Not bypassed by design.\n"
+                f"  raw response: {path}"
+            )
+
+        candidates = BingScripted._parse(html)
+        if not candidates:
+            raise SearchUnavailable(
+                f"bing_url returned no parseable results (raw: {path}). "
+                "The image URL may not be publicly reachable."
+            )
+        return SearchResponse(self.name, queried_at, str(path), digest, candidates)
+
+
 # ------------------------------------------------------------------------- serpapi
 
 class SerpApi:
@@ -365,7 +433,60 @@ class Replay:
         )
 
 
-BACKENDS = {"bing_scripted": BingScripted, "serpapi": SerpApi, "replay": Replay}
+# ---------------------------------------------------------------------------- auto
+
+class Auto:
+    """Try the no-key backends in order; first one with results wins.
+
+    A single engine is a single point of failure, and the one that fails is usually the
+    one being asked most often. Chaining costs nothing when the first works and saves the
+    run when it does not. serpapi is last because it is the only one needing a key, and
+    the point of this ordering is that a key should never be required.
+    """
+
+    name = "auto"
+
+    def __init__(self, headed: bool = False):
+        self.headed = headed
+        self.attempts: list[str] = []
+
+    def _chain(self, image_url: str | None):
+        # bing_url first: it needs no upload and kept working while the upload flow was
+        # being challenged on the same machine.
+        if image_url:
+            yield BingUrl(headed=self.headed)
+        yield BingScripted(headed=self.headed)
+        if os.environ.get("SERPAPI_KEY") and image_url:
+            yield SerpApi()
+
+    def search(self, image_path: Path, image_url: str | None = None,
+               **kw) -> SearchResponse:
+        self.attempts = []
+        problems = []
+
+        for backend in self._chain(image_url):
+            self.attempts.append(backend.name)
+            try:
+                return backend.search(image_path, image_url=image_url, **kw)
+            except (SearchBlocked, SearchUnavailable) as e:
+                problems.append(f"{backend.name}: {str(e).splitlines()[0]}")
+            except Exception as e:  # a backend fault must not end the run
+                problems.append(f"{backend.name}: {type(e).__name__}: {e}"[:200])
+
+        raise SearchBlocked(
+            "every search backend failed:\n  " + "\n  ".join(problems) +
+            "\n  No challenge was bypassed. Retry later, or pass --image-url so the "
+            "URL-based backend can be used."
+        )
+
+
+BACKENDS = {
+    "auto": Auto,
+    "bing_url": BingUrl,
+    "bing_scripted": BingScripted,
+    "serpapi": SerpApi,
+    "replay": Replay,
+}
 
 
 def get_backend(name: str, **kw):

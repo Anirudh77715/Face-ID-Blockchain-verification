@@ -67,8 +67,13 @@ Point at the contract address and deploy gas.
 ### 3 — The pipeline, live
 
 ```bash
-py run.py --image me.jpg --chain local --headed
+py run.py --image me.jpg --image-url "https://<your public photo url>" --chain local --headed
 ```
+
+Pass `--image-url` - the public URL of that same photo. It selects the URL-based backend,
+which needs no key, no upload, and in testing survived rate limiting far longer than the
+upload flow. `auto` falls through to the upload backend by itself if that URL fails, so a
+single blocked engine no longer ends the take.
 
 `--headed` shows the browser doing the search. Let it be visible — that is the proof the
 search is genuine rather than hardcoded.
@@ -76,7 +81,8 @@ search is genuine rather than hardcoded.
 Narrate as the stages print:
 
 - **face** — bounding box, confidence, 128-d embedding, image SHA-256
-- **search** — provider, candidate count, and that the raw response is saved and hashed
+- **search** — which backend resolved it, candidate count, and that the raw response is
+  saved and hashed. If `auto` fell through, it prints what it tried
 - **verify** — each candidate re-downloaded and re-embedded. Point at a row where
   `status` is `no_face` or the similarity is below threshold: *the search returned it,
   the pipeline rejected it.* This is the difference between a search hit and a face match.
