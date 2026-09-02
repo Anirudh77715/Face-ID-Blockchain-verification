@@ -267,6 +267,102 @@ def check_tests(r: Report) -> None:
         r.fail(f"tests failing: {summary}", "py -m pytest")
 
 
+# ------------------------------------------------------------------ end to end
+
+def check_end_to_end(r: Report) -> None:
+    """Actually run the pipeline and assert every outcome.
+
+    Uses the replay backend on purpose. The question this answers is "is my project
+    working", and a live search failing means a provider is rate-limiting today - which
+    is real, but it is not the project being broken. Exit codes are the contract, so they
+    are what gets asserted.
+    """
+    import shutil
+    import tempfile
+
+    workdir = Path(tempfile.mkdtemp(prefix="pom-e2e-"))
+    try:
+        deployed = subprocess.run(
+            [sys.executable, "deploy.py", "--chain", "local"],
+            cwd=ROOT, capture_output=True, text=True, timeout=300)
+        if deployed.returncode != 0:
+            r.fail("deploy failed", "is `npx hardhat node` running?")
+            return
+        address = next((ln.split()[1] for ln in deployed.stdout.splitlines()
+                        if ln.startswith("contract")), None)
+        r.ok("deploy", address or "ok")
+
+        run = subprocess.run(
+            [sys.executable, "run.py", "--image", "spike/control_small.jpg",
+             "--chain", "local", "--backend", "replay"],
+            cwd=ROOT, capture_output=True, text=True, timeout=900)
+        if run.returncode != 0:
+            r.fail(f"pipeline exited {run.returncode}, expected 0",
+                   (run.stderr or run.stdout)[-300:])
+            return
+        r.ok("pipeline runs", "exit 0")
+
+        bundles = sorted((ROOT / "evidence").glob("run-*.json"),
+                         key=lambda p: p.stat().st_mtime, reverse=True)
+        if not bundles:
+            r.fail("pipeline wrote no evidence bundle", "check run.py output")
+            return
+        bundle = bundles[0]
+
+        def verify(extra: list[str] | None = None) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, "verify.py", "--bundle", str(bundle),
+                 "--chain", "local", *(extra or [])],
+                cwd=ROOT, capture_output=True, text=True, timeout=300)
+
+        if verify().returncode == 0:
+            r.ok("verify accepts untouched evidence", "exit 0")
+        else:
+            r.fail("verify rejected untouched evidence", "the commitment is not matching")
+            return
+
+        # The claim is tamper-evidence, so the negative case is the one that matters.
+        pristine = workdir / "pristine.json"
+        shutil.copy(bundle, pristine)
+        try:
+            import json
+            data = json.loads(bundle.read_text(encoding="utf-8"))
+            data["candidates"][0]["page_url"] = "https://tampered.example/"
+            bundle.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            tampered = verify()
+            if tampered.returncode == 6 and "candidate[0]" in tampered.stdout:
+                r.ok("verify rejects tampered evidence", "exit 6, names candidate[0]")
+            elif tampered.returncode == 0:
+                r.fail("verify ACCEPTED tampered evidence",
+                       "tamper-evidence is broken - this is the core claim")
+            else:
+                r.fail(f"tamper detected but reported oddly (exit {tampered.returncode})",
+                       "expected exit 6 naming the field")
+        finally:
+            shutil.copy(pristine, bundle)
+
+        disclosed = verify(["--disclose", "0"])
+        if disclosed.returncode == 0 and "accepts this leaf" in disclosed.stdout:
+            r.ok("on-chain inclusion proof", "contract accepts a single leaf")
+        else:
+            r.warn("selective disclosure did not confirm",
+                   "non-fatal; the core path still verified")
+
+        noface = subprocess.run(
+            [sys.executable, "run.py", "--image", "spike/noface.jpg", "--chain", "local"],
+            cwd=ROOT, capture_output=True, text=True, timeout=300)
+        if noface.returncode == 4:
+            r.ok("guardrail: no face", "exit 4, nothing written")
+        else:
+            r.fail(f"no-face image exited {noface.returncode}, expected 4",
+                   "the guardrail is not firing")
+    except subprocess.TimeoutExpired:
+        r.fail("end-to-end check timed out", "is the local chain responsive?")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 # ----------------------------------------------------------------------------- main
 
 def main() -> int:
@@ -274,6 +370,8 @@ def main() -> int:
     ap.add_argument("--recording", action="store_true",
                     help="stricter checks for a one-take screen recording")
     ap.add_argument("--skip-tests", action="store_true")
+    ap.add_argument("--e2e", action="store_true",
+                    help="also run the whole pipeline and assert every outcome")
     args = ap.parse_args()
 
     r = Report()
@@ -301,6 +399,10 @@ def main() -> int:
     check_git(r)
     if not args.skip_tests:
         check_tests(r)
+
+    if args.e2e:
+        section("end to end")
+        check_end_to_end(r)
 
     if args.recording:
         section("recording readiness")

@@ -178,11 +178,36 @@ cp .env.example .env        # .env is gitignored
 them properly without a stale file overriding. `py preflight.py` reports which are
 configured — presence and length only, never the value.
 
+## Is it working?
+
+One command answers it. Needs `npx hardhat node` running.
+
+```bash
+py preflight.py --e2e
+```
+
+It checks the environment, then actually runs the pipeline and asserts every outcome -
+including the one that matters most, that `verify.py` **rejects** evidence it has just
+tampered with. A build where only the happy path passes is not working.
+
+```
+end to end
+  [pass] deploy                              0x71089Ba4...
+  [pass] pipeline runs                       exit 0
+  [pass] verify accepts untouched evidence   exit 0
+  [pass] verify rejects tampered evidence    exit 6, names candidate[0]
+  [pass] on-chain inclusion proof            contract accepts a single leaf
+  [pass] guardrail: no face                  exit 4, nothing written
+```
+
+Exit 0 means every required check passed. Warnings never fail it.
+
 ## Tests
 
 ```bash
-py -m pytest          # 171 tests
-py preflight.py       # environment, models, chain, and repo state
+py -m pytest                 # 201 tests
+py preflight.py              # setup only, no pipeline run
+py preflight.py --recording  # stricter, before a take that cannot be redone
 ```
 
 Tests are tiered by what they need: most run with no network, no chain and no models.
