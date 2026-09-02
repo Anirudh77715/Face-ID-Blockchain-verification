@@ -178,6 +178,31 @@ cp .env.example .env        # .env is gitignored
 them properly without a stale file overriding. `py preflight.py` reports which are
 configured — presence and length only, never the value.
 
+## Running offline
+
+The whole pipeline runs with the network unplugged, once the cache is warm:
+
+```bash
+py run.py --image me.jpg --image-url "https://..." --chain local   # warm the cache
+py run.py --image me.jpg --chain local --offline                   # no network at all
+```
+
+Offline reproduces the online run exactly - same 33 candidates, 12/12 cache hits, same
+8/12 accepted, same best match at 0.9738 - verified with all traffic forced through a dead
+proxy. The local chain needs no network either, so face, search replay, verification,
+commitment and attestation all work on a plane.
+
+**This is for rehearsal, reproducibility and bad venue wifi. It is not a submission mode.**
+The task requires "a genuine search step, not a hardcoded/pre-picked result", and a replayed
+search is by definition pre-picked. `--offline` forces the `replay` backend, which commits
+`provider=replay` into the Merkle leaves, so any bundle produced this way is permanently
+self-labelled and cannot be presented as a live run.
+
+Candidate images are cached content-addressed under `evidence/cache/`. Beyond offline use
+that means a rehearsal does not hit third-party image hosts five times, and a candidate
+image that changes or 404s between runs cannot silently alter the evidence. A cold cache
+offline reports `0/12 hits` and exits 2 rather than pretending.
+
 ## Is it working?
 
 One command answers it. Needs `npx hardhat node` running.

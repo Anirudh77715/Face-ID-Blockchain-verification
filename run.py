@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from pom import evidence
+from pom import match as match_module
 from pom.chain import AlreadyAttested, Chain, ChainError
 from pom.face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound
 from pom.match import best, verify
@@ -52,11 +53,27 @@ def main() -> int:
     ap.add_argument("--contract", help="override the deployed address")
     ap.add_argument("--no-chain", action="store_true",
                     help="run the pipeline but skip the write")
+    ap.add_argument("--offline", action="store_true",
+                    help="no network at all: replay the saved search and use only cached "
+                         "candidate images. For rehearsal and reproducibility - the search "
+                         "is not live, and the evidence records that")
     args = ap.parse_args()
 
     if not args.image.exists():
         print(f"no such image: {args.image}", file=sys.stderr)
         return 1
+
+    if args.offline:
+        # Offline is a promise about the whole run, not just the search, so it is
+        # enforced here rather than left to each backend to honour.
+        match_module.CACHE.offline = True
+        if args.backend not in ("replay",):
+            args.backend = "replay"
+        if args.chain != "local":
+            print("offline mode forces --chain local", file=sys.stderr)
+            args.chain = "local"
+        print("[33mOFFLINE - replaying a saved search, cached images only. "
+              "No live query is performed.[0m")
 
     encoder = FaceEncoder()
 
@@ -108,7 +125,8 @@ def main() -> int:
               f"{r.status:<15} {r.page_url[:44]}")
 
     winner = best(results)
-    print(f"\n  threshold   {args.threshold}")
+    print(f"\n  image cache {match_module.CACHE.summary}")
+    print(f"  threshold   {args.threshold}")
     print(f"  accepted    {sum(1 for r in results if r.accepted)}/{len(results)}")
 
     # ------------------------------------------------------------ 4. evidence

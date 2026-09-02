@@ -12,7 +12,9 @@ run produces.
 
 So:
 
-- **Rehearse with `--backend replay`.** It exercises every stage without touching Bing.
+- **Rehearse with `--offline`.** It exercises every stage with no network at all, so
+  rehearsing cannot consume the rate limit you need for the take. Warm the cache with one
+  online run first.
 - **Do not do a practice `bing_scripted` run right before the real take.** That is exactly
   what triggers the rate limit. Practising live is how you lose the take.
 - **Run the live search once.** Steps 4–7 all reuse its bundle, so a single successful

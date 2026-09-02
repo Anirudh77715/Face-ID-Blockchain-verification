@@ -283,3 +283,19 @@ def test_bing_url_requires_an_image_url(tmp_path):
     from pom.search import BingUrl
     with pytest.raises(SearchUnavailable, match="image-url"):
         BingUrl().search(tmp_path / "x.jpg")
+
+
+def test_replay_can_use_a_bing_url_capture(tmp_path, monkeypatch, reference_html):
+    """Both Bing backends save the same HTML shape. Globbing only bing_scripted made an
+    offline rerun silently fall back to the committed reference capture - a different
+    search, whose candidate images are not the ones a live run just cached."""
+    from pom import search as S
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    capture = raw / "bing_url-1234.raw"
+    capture.write_text(reference_html, encoding="utf-8")
+
+    monkeypatch.setattr(S, "RAW_DIR", raw)
+    response = Replay().search(tmp_path / "unused.jpg")
+    assert response.raw_path == str(capture), "bing_url captures must be replayable"

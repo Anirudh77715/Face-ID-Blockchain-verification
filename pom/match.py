@@ -14,8 +14,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from .cache import ImageCache, OfflineMiss
 from .face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound, sha256_bytes
 from .search import Candidate
+
+# Module-level so `_fetch` keeps its one-argument signature: tests monkeypatch it, and a
+# cache flag threaded through the call chain would leak an implementation detail into
+# every caller.
+CACHE = ImageCache()
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 15
@@ -38,7 +44,7 @@ class MatchResult:
         return asdict(self)
 
 
-def _fetch(url: str) -> bytes:
+def _download(url: str) -> bytes:
     import requests
 
     with requests.get(url, timeout=DOWNLOAD_TIMEOUT, stream=True,
@@ -54,6 +60,11 @@ def _fetch(url: str) -> bytes:
             if len(buf) > MAX_IMAGE_BYTES:
                 raise ValueError(f"image exceeds {MAX_IMAGE_BYTES} bytes")
         return bytes(buf)
+
+
+def _fetch(url: str) -> bytes:
+    """Cache-first. Offline, a miss raises rather than reaching for the network."""
+    return CACHE.fetch(url, _download)
 
 
 def verify(
@@ -87,6 +98,8 @@ def verify(
                 data = _fetch(url)
                 used_url = url
                 break
+            except OfflineMiss as e:
+                fetch_error = f"not cached (offline): {str(e).splitlines()[0]}"
             except Exception as e:
                 fetch_error = f"{type(e).__name__}: {e}"
 

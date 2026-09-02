@@ -400,8 +400,13 @@ class Replay:
         # right after being rate-limited - which is exactly the moment replay gets reached
         # for - so choosing blindly by mtime fails when it is most needed. The committed
         # reference capture is the last resort, so a clean clone can always run.
-        for path in [*sorted(RAW_DIR.glob("bing_scripted-*.raw"),
-                             key=lambda p: p.stat().st_mtime, reverse=True),
+        # Both Bing backends save the same HTML shape, so both are replayable. Globbing
+        # only bing_scripted made an offline rerun silently fall back to the committed
+        # reference capture - a different search, whose candidate images are not the ones
+        # a live run just cached.
+        saved = [p for pattern in ("bing_scripted-*.raw", "bing_url-*.raw")
+                 for p in RAW_DIR.glob(pattern)]
+        for path in [*sorted(saved, key=lambda p: p.stat().st_mtime, reverse=True),
                      REFERENCE_CAPTURE]:
             if not path.exists():
                 continue
