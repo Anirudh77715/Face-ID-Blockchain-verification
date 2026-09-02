@@ -93,7 +93,9 @@ Both, from one code path in `pom/chain.py`:
 | `--chain local` | 31337 | Hardhat's node. No wallet, no faucet, no key — anyone who clones this can reproduce a full run offline. The brief permits a local/simulated chain explicitly. |
 | `--chain sepolia` | 84532 | Base Sepolia. One real public transaction, independently inspectable in a block explorer. |
 
-Measured on the local chain: **374,249 gas** to deploy, **96,622 gas** per attestation.
+Measured on the local chain: **374,249 gas** to deploy. Attestations cost **113,722 gas for
+the first one on a fresh contract** and **96,622 thereafter** — the first write pays for a
+cold storage slot when the roots array is initialised.
 
 > Base Sepolia deployment address and transaction hash: _pending — see Known limitations._
 
