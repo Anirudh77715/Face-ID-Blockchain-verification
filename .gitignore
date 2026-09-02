@@ -1,0 +1,7 @@
+spike/raw/
+__pycache__/
+*.pyc
+.env
+evidence/
+node_modules/
+models/*.onnx
