@@ -1,0 +1,140 @@
+{
+  "threshold": 0.363,
+  "n_images": 12,
+  "n_people": 8,
+  "same_min": 0.7876,
+  "same_max": 0.9562,
+  "diff_max": 0.2768,
+  "diff_min": -0.1134,
+  "false_negatives": 0,
+  "false_positives": 0,
+  "same_pairs": [
+    [
+      0.7876,
+      "einstein-1",
+      "einstein-3"
+    ],
+    [
+      0.7912,
+      "einstein-2",
+      "einstein-3"
+    ],
+    [
+      0.7941,
+      "einstein-2",
+      "einstein-4"
+    ],
+    [
+      0.7991,
+      "einstein-1",
+      "einstein-4"
+    ],
+    [
+      0.802,
+      "einstein-0",
+      "einstein-4"
+    ],
+    [
+      0.8051,
+      "einstein-0",
+      "einstein-3"
+    ],
+    [
+      0.8131,
+      "einstein-3",
+      "einstein-4"
+    ],
+    [
+      0.9386,
+      "einstein-0",
+      "einstein-2"
+    ],
+    [
+      0.9477,
+      "einstein-1",
+      "einstein-2"
+    ],
+    [
+      0.9562,
+      "einstein-0",
+      "einstein-1"
+    ]
+  ],
+  "diff_pairs": [
+    [
+      0.2768,
+      "einstein-3",
+      "bohr-0"
+    ],
+    [
+      0.2476,
+      "einstein-4",
+      "bohr-0"
+    ],
+    [
+      0.2458,
+      "curie-0",
+      "turing-0"
+    ],
+    [
+      0.2395,
+      "curie-0",
+      "bohr-0"
+    ],
+    [
+      0.2315,
+      "einstein-0",
+      "curie-0"
+    ],
+    [
+      0.2289,
+      "einstein-3",
+      "turing-0"
+    ],
+    [
+      0.2261,
+      "einstein-0",
+      "turing-0"
+    ],
+    [
+      0.2171,
+      "einstein-3",
+      "curie-0"
+    ],
+    [
+      0.2113,
+      "einstein-2",
+      "turing-0"
+    ],
+    [
+      0.2074,
+      "einstein-4",
+      "curie-0"
+    ],
+    [
+      0.2056,
+      "einstein-0",
+      "bohr-0"
+    ],
+    [
+      0.1983,
+      "gandhi-0",
+      "feynman-0"
+    ],
+    [
+      0.1983,
+      "einstein-2",
+      "curie-0"
+    ],
+    [
+      0.1936,
+      "einstein-1",
+      "curie-0"
+    ],
+    [
+      0.182,
+      "tesla-0",
+      "turing-0"
+    ]
+  ]
+}

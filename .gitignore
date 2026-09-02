@@ -1,7 +1,9 @@
 spike/raw/
+bench/faces/
 __pycache__/
 *.pyc
 .env
 evidence/
 node_modules/
 models/*.onnx
+.browser-profile/
