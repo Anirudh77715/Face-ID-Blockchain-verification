@@ -5,6 +5,8 @@ Requires a node:  npx hardhat node
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from web3.exceptions import ContractLogicError
 
@@ -131,3 +133,20 @@ def test_sepolia_without_a_key_fails_clearly(monkeypatch):
     with pytest.raises(ChainError) as e:
         Chain("sepolia")
     assert "PRIVATE_KEY" in str(e.value) or "cannot reach" in str(e.value)
+
+
+def test_deploy_does_not_persist_unless_asked(chain, tmp_path, monkeypatch):
+    """Regression: deploy() used to always write deployments.json, so running the test
+    suite - which preflight.py does - repointed the recorded address at a throwaway test
+    contract that already held attestations."""
+    from pom import chain as C
+
+    marker = tmp_path / "deployments.json"
+    monkeypatch.setattr(C, "DEPLOYMENTS", marker)
+
+    chain.deploy()
+    assert not marker.exists(), "deploy() persisted without being asked to"
+
+    chain.deploy(remember=True)
+    assert marker.exists()
+    assert "local" in json.loads(marker.read_text(encoding="utf-8"))

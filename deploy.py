@@ -38,7 +38,7 @@ def main() -> int:
         return 1
 
     try:
-        receipt = chain.deploy()
+        receipt = chain.deploy(remember=True)
     except ChainError as e:
         print(e, file=sys.stderr)
         return 1

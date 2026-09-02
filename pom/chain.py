@@ -143,7 +143,16 @@ class Chain:
 
     # ------------------------------------------------------------------- deploy
 
-    def deploy(self) -> Receipt:
+    def deploy(self, remember: bool = False) -> Receipt:
+        """Deploy a new registry.
+
+        `remember` is opt-in, and deploy.py is the only caller that sets it. Persisting
+        by default meant the test suite — which deploys throwaway registries — silently
+        repointed deployments.json at one of them. `preflight.py` runs the tests, so
+        checking your setup would quietly replace the contract you had just deployed with
+        a test fixture that already held attestations. That is the kind of thing you
+        discover mid-recording.
+        """
         contract = self.w3.eth.contract(abi=self.abi, bytecode=self.bytecode)
         tx = contract.constructor().build_transaction({
             "from": self.account.address,
@@ -153,7 +162,8 @@ class Chain:
         })
         tx_hash, receipt = self._send(tx)
         address = receipt["contractAddress"]
-        self._remember(address)
+        if remember:
+            self._remember(address)
         return Receipt(_hex(tx_hash), receipt["blockNumber"], receipt["gasUsed"],
                        address, self.network)
 
