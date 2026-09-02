@@ -30,8 +30,6 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "evidence" / "raw"
 
-PROFILE_DIR = Path(__file__).resolve().parent.parent / ".browser-profile"
-
 CHALLENGE_MARKERS = (
     "verify you are human", "one last step", "unusual traffic",
     "are you a robot", "smartcaptcha", "recaptcha", "please solve the challenge",
@@ -103,7 +101,7 @@ class BingScripted:
 
     name = "bing_scripted"
 
-    def __init__(self, headed: bool = True, timeout_ms: int = 30_000):
+    def __init__(self, headed: bool = False, timeout_ms: int = 30_000):
         self.headed = headed
         self.timeout_ms = timeout_ms
 
@@ -111,19 +109,19 @@ class BingScripted:
         from playwright.sync_api import sync_playwright
 
         queried_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as pw:
-            # A persistent profile keeps cookies between runs, which materially reduces
-            # how often Bing challenges a request.
-            ctx = pw.chromium.launch_persistent_context(
-                str(PROFILE_DIR),
-                headless=not self.headed,
+            # A fresh context, deliberately. Reusing a persistent profile seemed like the
+            # obvious way to look less like a bot, but measured side by side on the same
+            # image it makes Bing serve a stripped layout carrying no result objects at
+            # all (22 results vs 0). Cookie-warming is not worth a page with no data on it.
+            browser = pw.chromium.launch(headless=not self.headed)
+            ctx = browser.new_context(
                 locale="en-US",
                 viewport={"width": 1400, "height": 900},
                 user_agent=UA,
             )
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page = ctx.new_page()
             try:
                 page.goto("https://www.bing.com/images", wait_until="domcontentloaded",
                           timeout=self.timeout_ms)
@@ -140,6 +138,7 @@ class BingScripted:
                 html = page.content()
             finally:
                 ctx.close()
+                browser.close()
 
         if any(m in html.lower() for m in CHALLENGE_MARKERS):
             path, digest = _persist(self.name, html.encode("utf-8"))
@@ -261,7 +260,56 @@ class SerpApi:
         return SearchResponse(self.name, queried_at, str(path), digest, out)
 
 
-BACKENDS = {"bing_scripted": BingScripted, "serpapi": SerpApi}
+# ------------------------------------------------------------------------- replay
+
+class Replay:
+    """Re-parse a previously saved raw response. Development only.
+
+    This exists because the downstream stages — verification, the bundle, the Merkle
+    commitment, the chain write — should be testable without a live search, and because
+    the live search rate-limits. It is NOT a search: it performs no network query and
+    proves nothing about what is online now.
+
+    It cannot be passed off as a genuine run. `provider` is committed as a Merkle leaf, so
+    any bundle produced this way carries "replay" inside the hash that goes on chain, and
+    `verify.py` will show it. The recording must use bing_scripted.
+    """
+
+    name = "replay"
+
+    def __init__(self, source: Path | str | None = None):
+        self.source = Path(source) if source else None
+
+    def search(self, image_path: Path, **_) -> SearchResponse:
+        source = self.source
+        if source is None:
+            saved = sorted(RAW_DIR.glob("bing_scripted-*.raw"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            if not saved:
+                raise SearchUnavailable(
+                    f"no saved response to replay under {RAW_DIR}")
+            source = saved[0]
+        if not source.exists():
+            raise SearchUnavailable(f"no such saved response: {source}")
+
+        payload = source.read_bytes()
+        html = payload.decode("utf-8", errors="replace")
+        candidates = BingScripted._parse(html)
+        if not candidates:
+            raise SearchUnavailable(
+                f"{source} contains no parseable results (was it a challenge page?)")
+
+        return SearchResponse(
+            provider=self.name,
+            queried_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                     time.gmtime(source.stat().st_mtime)),
+            raw_path=str(source),
+            raw_sha256=hashlib.sha256(payload).hexdigest(),
+            candidates=candidates,
+        )
+
+
+BACKENDS = {"bing_scripted": BingScripted, "serpapi": SerpApi, "replay": Replay}
 
 
 def get_backend(name: str, **kw):

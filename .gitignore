@@ -7,3 +7,6 @@ evidence/
 node_modules/
 models/*.onnx
 .browser-profile/
+artifacts/
+cache/
+deployments.json
