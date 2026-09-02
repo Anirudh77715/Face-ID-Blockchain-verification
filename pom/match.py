@@ -12,8 +12,7 @@ considered and dismissed rather than only what survived.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from pathlib import Path
+from dataclasses import asdict, dataclass
 
 from .face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound, sha256_bytes
 from .search import Candidate
@@ -72,7 +71,8 @@ def verify(
 
     results: list[MatchResult] = []
     for cand in ordered[:limit]:
-        base = dict(page_url=cand.page_url, image_url=cand.image_url, social=cand.social)
+        base = {"page_url": cand.page_url, "image_url": cand.image_url,
+                "social": cand.social}
 
         if not cand.image_url:
             results.append(MatchResult(**base, status="no_image_url",

@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      # OpenCV's headless wheel is the right one for CI; the desktop build pulls GUI
+      # libraries that are not present on a runner.
+      - name: Use headless OpenCV
+        run: pip install --force-reinstall opencv-python-headless
+
+      - name: Fetch models
+        run: python scripts/fetch_models.py
+
+      - name: Install contract toolchain
+        run: npm ci
+
+      - name: Compile contract
+        run: npx hardhat compile
+
+      # Started in the background so the needs_chain tier runs too. Without it those
+      # tests skip, and the on-chain inclusion proofs would go unverified in CI.
+      - name: Start local chain
+        run: |
+          npx hardhat node > hardhat.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s -X POST -H 'Content-Type: application/json' \
+                 --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+                 http://127.0.0.1:8545 > /dev/null; then
+              echo "chain up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "chain failed to start"; cat hardhat.log; exit 1
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: python -m pytest
+
+      # Proves the documented quickstart still works, not just that the tests pass.
+      - name: Smoke test the pipeline end to end
+        run: |
+          python deploy.py --chain local
+          python run.py --image spike/control_small.jpg --chain local --backend replay
+          python verify.py --bundle "$(ls evidence/run-*.json | head -1)" --chain local
+
+      - name: Tamper detection must fail verification
+        run: |
+          BUNDLE="$(ls evidence/run-*.json | head -1)"
+          python - "$BUNDLE" <<'PY'
+          import json, sys
+          p = sys.argv[1]
+          d = json.load(open(p, encoding="utf-8"))
+          d["candidates"][0]["page_url"] = "https://tampered.example/"
+          json.dump(d, open(p, "w", encoding="utf-8"), indent=2)
+          PY
+          if python verify.py --bundle "$BUNDLE" --chain local; then
+            echo "verify.py accepted tampered evidence"; exit 1
+          fi
+          echo "tampered evidence correctly rejected"
+
+      - name: Upload chain log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardhat-log
+          path: hardhat.log

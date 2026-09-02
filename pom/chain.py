@@ -53,6 +53,30 @@ class ChainError(Exception):
     pass
 
 
+class AlreadyAttested(ChainError):
+    """This exact evidence is already on chain.
+
+    Identical evidence hashes to an identical root by design — the root *is* the identity
+    of a run — so re-running a pipeline over the same inputs collides. That is not a
+    failure of the run, and it should not surface as `execution reverted`, because the
+    situation it arises in is rehearsing a demo and then performing it.
+    """
+
+    def __init__(self, root_hex: str, record: dict, address: str):
+        self.root_hex = root_hex
+        self.record = record
+        self.address = address
+        super().__init__(
+            f"this evidence is already attested on {address}\n"
+            f"  root       {root_hex}\n"
+            f"  recorded   {record['timestamp']} by {record['submitter']}\n"
+            f"  candidates {record['candidate_count']}   matched {record['matched']}\n"
+            "  The commitment is already on chain, so verification of this bundle will\n"
+            "  succeed. To produce a fresh transaction, redeploy (py deploy.py) or run\n"
+            "  against a different image."
+        )
+
+
 @dataclass
 class Receipt:
     tx_hash: str
@@ -160,6 +184,16 @@ class Chain:
     def record(self, root: bytes, candidate_count: int, matched: bool,
                address: str | None = None) -> Receipt:
         c = self.contract(address)
+
+        # Checked before sending rather than caught after, so no gas is spent and the
+        # caller gets the existing record instead of a decoded revert string.
+        if c.functions.exists(root).call():
+            raise AlreadyAttested(
+                "0x" + root.hex(),
+                self.get(root, address=address),
+                c.address,
+            )
+
         tx = c.functions.record(root, candidate_count, matched).build_transaction({
             "from": self.account.address,
             "nonce": self.w3.eth.get_transaction_count(self.account.address),
@@ -177,6 +211,26 @@ class Chain:
 
     def exists(self, root: bytes, address: str | None = None) -> bool:
         return self.contract(address).functions.exists(root).call()
+
+    def find_record_tx(self, root: bytes, address: str | None = None,
+                       from_block: int | str = 0) -> dict | None:
+        """Recover the transaction that committed a root, from the event log.
+
+        Used when a rerun collides with an existing attestation: the bundle should still
+        point at the transaction that actually carries its commitment. Returns None if the
+        log cannot be searched — some public RPCs cap the block range, and a missing tx
+        hash is not worth failing a run over.
+        """
+        try:
+            logs = self.contract(address).events.MatchRecorded().get_logs(
+                from_block=from_block, argument_filters={"root": root})
+        except Exception:
+            return None
+        if not logs:
+            return None
+        event = logs[-1]
+        return {"tx_hash": _hex(event["transactionHash"]),
+                "block": event["blockNumber"]}
 
     def verify_inclusion(self, root: bytes, leaf: bytes, proof: list[bytes],
                          address: str | None = None) -> bool:

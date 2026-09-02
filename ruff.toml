@@ -1,0 +1,13 @@
+line-length = 92
+target-version = "py310"
+exclude = ["artifacts", "cache", "node_modules", "spike/raw"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",    # line length is enforced by line-length above, not per-line noqa churn
+    "SIM105",  # contextlib.suppress reads worse than try/except pass in the parse loops
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]

@@ -32,6 +32,7 @@ npx hardhat compile
 npx hardhat node                    # leave running in another terminal
 
 py deploy.py --chain local
+py preflight.py                     # verify the whole setup before you rely on it
 py run.py    --image path/to/face.jpg --chain local
 py verify.py --bundle evidence/run-<id>.json --chain local
 ```
@@ -134,6 +135,25 @@ evidence the threshold is not obviously wrong — not as a benchmark result. Rep
 Exit 2 matters. A run that finds nothing leaves no attestation behind — the record is for
 matches, not for attempts.
 
+## Tests
+
+```bash
+py -m pytest          # 170 tests
+py preflight.py       # environment, models, chain, and repo state
+```
+
+Tests are tiered by what they need: most run with no network, no chain and no models.
+`needs_models` and `needs_chain` skip cleanly when those are absent, so a partial checkout
+still gives a useful signal. CI runs every tier, including on-chain inclusion proofs
+against a live Hardhat node, then smoke-tests the documented quickstart and asserts that
+`verify.py` **rejects** a bundle it has deliberately tampered with.
+
+`preflight.py` exists because the failure modes here are quiet ones. A truncated model does
+not raise, it reports "no face". A restarted node leaves a deployed address that is no
+longer a contract. Identical evidence hashes to a root that is already attested, so a rerun
+sends no transaction. Each looks like a broken pipeline rather than a setup problem, and
+`--recording` checks all of them before a take that cannot be redone.
+
 ## Known limitations
 
 **The scripted search rate-limits, and is not bypassed.** Bing Visual Search works on a
@@ -165,6 +185,12 @@ stages stay testable while the live search is cooling down. It performs no query
 commits `provider=replay` into the Merkle leaves, so any bundle it produces is permanently
 self-labelled and cannot be presented as a live result.
 
+**Identical evidence collides by design.** The root *is* the identity of a run, so
+re-running over the same inputs produces the same root and the contract refuses a duplicate.
+This is reported as `already attested` with the original transaction recovered from the
+event log, not as a failure - verification of that bundle still succeeds. For a fresh
+transaction, redeploy or use a different image.
+
 **Consent.** Run this on your own face, or on faces whose owners agreed. It is a
 face-to-social-media pipeline writing to an immutable ledger; that is worth being
 deliberate about, which is also why only hashes go on chain.
@@ -184,6 +210,8 @@ pom/chain.py            web3: deploy, record, read back, verify inclusion
 contracts/AttestationRegistry.sol
 scripts/calibrate.py    threshold measurement
 scripts/fetch_models.py ONNX weights, SHA-256 verified
+preflight.py            setup and recording sanity checks
+tests/                  170 tests, tiered by what they require
 spike/FINDINGS.md       day-1 search viability study
 ```
 

@@ -19,9 +19,10 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 
 RAW = Path(__file__).parent / "raw"
 

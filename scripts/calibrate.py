@@ -14,7 +14,6 @@ and nothing leaves the machine.
 
 from __future__ import annotations
 
-import io
 import itertools
 import json
 import sys

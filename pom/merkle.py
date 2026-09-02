@@ -10,6 +10,13 @@ publish their identity to prove a match happened.
 
 Layout matches OpenZeppelin's MerkleProof: keccak256, pairs sorted before hashing (so a
 proof carries no left/right flags), odd node promoted unchanged to the next level.
+
+Consequence of sorting pairs, stated plainly because it is easy to assume otherwise:
+exchanging two leaves that happen to be siblings yields the *same* root. Leaf position
+therefore carries no integrity guarantee by itself. The guarantee here comes from `leaf()`
+binding a field's name into its hash, so a value cannot be replayed under a different name
+and a reordered bundle recomputes to different leaves entirely. Both behaviours are pinned
+by tests in tests/test_merkle.py and tests/test_evidence.py.
 """
 
 from __future__ import annotations

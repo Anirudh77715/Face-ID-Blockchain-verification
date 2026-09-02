@@ -22,11 +22,10 @@ import hashlib
 import html as html_lib
 import json
 import os
-import re
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "evidence" / "raw"
 
@@ -285,28 +284,43 @@ class Replay:
         self.source = Path(source) if source else None
 
     def search(self, image_path: Path, **_) -> SearchResponse:
-        source = self.source
-        if source is None:
-            saved = sorted(RAW_DIR.glob("bing_scripted-*.raw"),
-                           key=lambda p: p.stat().st_mtime, reverse=True)
-            # Fall back to the committed capture so a fresh clone can exercise the
-            # pipeline even when the live search is challenging requests. Without this,
-            # being rate-limited leaves a reviewer with nothing to run at all.
-            source = saved[0] if saved else REFERENCE_CAPTURE
-            if not source.exists():
+        if self.source is not None:
+            if not self.source.exists():
+                raise SearchUnavailable(f"no such saved response: {self.source}")
+            candidates = self._candidates_in(self.source)
+            if not candidates:
                 raise SearchUnavailable(
-                    f"no saved response under {RAW_DIR} and no reference capture "
-                    f"at {REFERENCE_CAPTURE}")
-        if not source.exists():
-            raise SearchUnavailable(f"no such saved response: {source}")
+                    f"{self.source} holds no parseable results "
+                    "(a challenge page, or a search that returned nothing)")
+            return self._respond(self.source, candidates)
 
+        # Newest *usable* capture, not merely newest. A saved challenge page sorts first
+        # right after being rate-limited - which is exactly the moment replay gets reached
+        # for - so choosing blindly by mtime fails when it is most needed. The committed
+        # reference capture is the last resort, so a clean clone can always run.
+        for path in [*sorted(RAW_DIR.glob("bing_scripted-*.raw"),
+                             key=lambda p: p.stat().st_mtime, reverse=True),
+                     REFERENCE_CAPTURE]:
+            if not path.exists():
+                continue
+            candidates = self._candidates_in(path)
+            if candidates:
+                return self._respond(path, candidates)
+
+        raise SearchUnavailable(
+            f"no usable saved response under {RAW_DIR}, and the reference capture at "
+            f"{REFERENCE_CAPTURE} is missing or unparseable")
+
+    @staticmethod
+    def _candidates_in(path: Path) -> list[Candidate]:
+        try:
+            html = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            return []
+        return BingScripted._parse(html)
+
+    def _respond(self, source: Path, candidates: list[Candidate]) -> SearchResponse:
         payload = source.read_bytes()
-        html = payload.decode("utf-8", errors="replace")
-        candidates = BingScripted._parse(html)
-        if not candidates:
-            raise SearchUnavailable(
-                f"{source} contains no parseable results (was it a challenge page?)")
-
         return SearchResponse(
             provider=self.name,
             queried_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",

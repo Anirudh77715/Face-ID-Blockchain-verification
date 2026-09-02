@@ -24,9 +24,16 @@ So:
 ## Before you hit record
 
 ```bash
-py scripts/fetch_models.py     # models present and SHA-256 clean
 npm install && npx hardhat compile
+npx hardhat node               # separate terminal
+py deploy.py --chain local
+py preflight.py --recording    # must exit 0; read every warning
 ```
+
+`preflight --recording` is the whole checklist in one command: models present and
+SHA-256 clean, chromium launching, contract compiled and deployed, tests passing, and a
+warning if the contract already holds attestations - because re-running identical evidence
+sends no transaction, which on camera looks like the chain write silently failing.
 
 - [ ] Your photo is ready — one you have **publicly posted** (profile picture works).
       Confirm it is findable: search it once, hours before the take, then leave Bing alone.

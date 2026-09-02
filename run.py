@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from pom import evidence
-from pom.chain import Chain, ChainError
+from pom.chain import AlreadyAttested, Chain, ChainError
 from pom.face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound
 from pom.match import best, verify
 from pom.search import SearchBlocked, SearchUnavailable, get_backend
@@ -133,6 +133,34 @@ def main() -> int:
     try:
         chain = Chain(args.chain)
         receipt = chain.record(root, len(results), True, address=args.contract)
+    except AlreadyAttested as e:
+        # Identical evidence hashes to an identical root by design, so a rerun collides.
+        # The commitment is already there, so this is reported rather than failed -
+        # verification of this bundle still succeeds against the existing record.
+        print("  \033[33malready attested - no new transaction sent\033[0m")
+        print(f"  contract    {e.address}")
+        print(f"  root        {e.root_hex}")
+        print(f"  recorded    {e.record['timestamp']} by {e.record['submitter']}")
+
+        prior = chain.find_record_tx(root, address=args.contract) or {}
+        bundle["attestation"] = {
+            "written": True,
+            "pre_existing": True,
+            "network": args.chain,
+            "contract": e.address,
+            "tx_hash": prior.get("tx_hash"),
+            "block": prior.get("block"),
+            "gas_used": 0,
+            "explorer_url": None,
+        }
+        path = evidence.save(bundle)
+        if prior.get("tx_hash"):
+            print(f"  original tx {prior['tx_hash']}  (block {prior['block']})")
+        print(f"  bundle      {path}")
+        print("\n  For a fresh transaction: py deploy.py, or use a different image.")
+        rule("NEXT")
+        print(f"  py verify.py --bundle {path} --chain {args.chain}")
+        return 0
     except ChainError as e:
         print(f"  {e}", file=sys.stderr)
         bundle["attestation"] = {"written": False, "reason": str(e)}
