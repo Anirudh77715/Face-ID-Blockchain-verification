@@ -163,7 +163,7 @@ def main() -> int:
     ap.add_argument("--engine", default="yandex,lens,bing",
                     help="comma-separated, tried in order")
     ap.add_argument("--headed", action="store_true",
-                    help="visible browser — also how the final recording should run")
+                    help="visible browser - also how the final recording should run")
     args = ap.parse_args()
 
     if not args.image.exists():

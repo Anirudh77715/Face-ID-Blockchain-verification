@@ -116,7 +116,7 @@ class Chain:
         key = cfg["default_key"] or os.environ.get(cfg["key_env"] or "", "")
         if not key:
             raise ChainError(
-                f"{cfg['key_env']} is not set — needed to sign on {network}. "
+                f"{cfg['key_env']} is not set - needed to sign on {network}. "
                 "Use --chain local to run without any wallet."
             )
         self.account = self.w3.eth.account.from_key(key)

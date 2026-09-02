@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pom  # noqa: F401  - configures UTF-8 output and BLAS threads on import
+
 ROOT = Path(__file__).resolve().parent
 
 GREEN, RED, YELLOW, DIM, BOLD, OFF = (

@@ -14,6 +14,17 @@ lives in the package __init__ rather than in a main().
 """
 
 import os
+import sys
+
+# Windows consoles default to cp1252. Any non-ASCII character in a printed message then
+# renders as a replacement glyph - an error that says "PRIVATE_KEY is not set <?> needed
+# to sign" reads like corruption rather than instruction. Reconfiguring is cheap and
+# makes the output encoding a property of the program, not of the terminal it landed in.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass  # already wrapped, redirected, or closed - never worth failing a run over
 
 for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS"):
     os.environ.setdefault(_var, "1")
