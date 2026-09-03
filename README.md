@@ -41,15 +41,17 @@ py verify.py --bundle evidence/run-<id>.json --chain local
 
 ### 1. Face — OpenCV 5.0 YuNet + SFace
 
-Detection and a 128-d embedding, both shipping inside `opencv-python` as ONNX. Chosen over
-dlib/`face_recognition` still needs CMake and MSVC on Windows. **insightface no longer does**
-— 1.0.1 ships a pure-Python wheel, and this repo's earlier claim that it needed a compiler
-was out of date; it was checked and corrected rather than left standing. The reason to stay
-on SFace is different: this task's input is a photo the subject actually posted, so matching
-is near-duplicate rather than cross-pose, and the measured separation margin is +0.51. A
-512-d ArcFace model would help on hard cases (different decade, heavy angle) at the cost of
-~300 MB of weights and a full re-calibration. That trade is documented in Known limitations
-rather than quietly taken.
+Detection and a 128-d embedding, both shipping inside `opencv-python` as ONNX, so neither
+needs a build step.
+
+dlib/`face_recognition` still needs CMake and MSVC on Windows. **insightface no longer
+does** — 1.0.1 ships a pure-Python wheel, and this repo's earlier claim that it needed a
+compiler was out of date; it was checked and corrected rather than left standing. The
+reason to stay on SFace is a different one: this task's input is a photo the subject
+actually posted, so matching is near-duplicate rather than cross-pose, and the measured
+separation margin is +0.51. A 512-d ArcFace model would help on hard cases — a different
+decade, a heavy angle — at the cost of ~300 MB of weights and a full re-calibration. That
+trade is documented under Known limitations rather than quietly taken.
 
 The run also writes an annotated copy showing the detected box, which the viewer displays.
 A pipeline reporting `bbox (383, 266, 326, 479)` has proved detection to itself; drawing the
@@ -88,7 +90,6 @@ than the ranking: two Bing routes share an index and a failure mode, so a chain 
 one provider wearing two hats. Yandex is a genuinely independent index, which makes it the
 fallback that actually helps when Bing is the thing being challenged. Pass `--image-url` to
 enable both.
-
 
 A reverse image search returns pages that are *visually similar*. That is not the same
 claim as "this is the same face", and a pipeline that reports search hits as identity
