@@ -203,6 +203,24 @@ that means a rehearsal does not hit third-party image hosts five times, and a ca
 image that changes or 404s between runs cannot silently alter the evidence. A cold cache
 offline reports `0/12 hits` and exits 2 rather than pretending.
 
+## Viewer (optional)
+
+```bash
+py viewer.py        # http://127.0.0.1:8000
+```
+
+A local, read-only page listing evidence bundles: the query face, which backend resolved
+the search, every candidate with its similarity score, the commitment, and a button that
+verifies against the chain. Rejected candidates stay visible and dimmed, because "the
+search returned this and the pipeline declined it" is the distinction the whole build rests
+on, and it reads better as a table than as terminal output.
+
+Not part of the pipeline, and the task requires no website. Two constraints it holds to:
+it never writes a bundle, sends a transaction, or runs a search; and verification calls
+`pom.evidence` and `pom.chain` - the same code `verify.py` uses - so it cannot agree with
+itself while disagreeing with the tool that matters. Stdlib only, bound to localhost,
+because bundles name the pages a face was matched to.
+
 ## Is it working?
 
 One command answers it. Needs `npx hardhat node` running.
@@ -304,6 +322,7 @@ contracts/AttestationRegistry.sol
 scripts/calibrate.py    threshold measurement
 scripts/fetch_models.py ONNX weights, SHA-256 verified
 preflight.py            setup and recording sanity checks
+viewer.py               optional local read-only evidence viewer
 tests/                  171 tests, tiered by what they require
 spike/FINDINGS.md       day-1 search viability study
 ```
