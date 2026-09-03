@@ -42,8 +42,14 @@ py verify.py --bundle evidence/run-<id>.json --chain local
 ### 1. Face — OpenCV 5.0 YuNet + SFace
 
 Detection and a 128-d embedding, both shipping inside `opencv-python` as ONNX. Chosen over
-dlib/`face_recognition` and insightface because those need a compiler toolchain on Windows
-and this needs none.
+dlib/`face_recognition` still needs CMake and MSVC on Windows. **insightface no longer does**
+— 1.0.1 ships a pure-Python wheel, and this repo's earlier claim that it needed a compiler
+was out of date; it was checked and corrected rather than left standing. The reason to stay
+on SFace is different: this task's input is a photo the subject actually posted, so matching
+is near-duplicate rather than cross-pose, and the measured separation margin is +0.51. A
+512-d ArcFace model would help on hard cases (different decade, heavy angle) at the cost of
+~300 MB of weights and a full re-calibration. That trade is documented in Known limitations
+rather than quietly taken.
 
 The run also writes an annotated copy showing the detected box, which the viewer displays.
 A pipeline reporting `bbox (383, 266, 326, 479)` has proved detection to itself; drawing the
@@ -348,6 +354,13 @@ property of the index, not evidence about the person.
 **Matching is near-duplicate-biased.** SFace compares faces, but candidates only exist if
 an engine surfaced the page, and engines favour visually similar *images*. Expect this to
 find reposts of a photo far more reliably than a different photo of the same person.
+
+**A larger face model would match harder cases.** SFace is 128-d and lightweight. An
+ArcFace model (insightface `buffalo_l`, 512-d) is measurably stronger when the two photos
+differ in pose, lighting or age. It is not used here because the task's input is a photo
+the subject posted — so the match is near-duplicate — and switching would mean 300 MB of
+weights and re-deriving the threshold. If this were a product rather than a submission,
+that is the first upgrade.
 
 **The calibration set is small.** 12 images, 8 people, positives from a single identity.
 Enough to show the threshold sits in a gap; not enough to quote a false-positive rate at

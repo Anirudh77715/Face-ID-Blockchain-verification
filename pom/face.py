@@ -1,7 +1,13 @@
 """Face detection and embedding — OpenCV YuNet (detect) + SFace (128-d embed).
 
-Chosen over dlib/`face_recognition` and insightface because both need a compiler
-toolchain on Windows; these ship inside `opencv-python` as ONNX and need none.
+Chosen over dlib/`face_recognition`, which still needs CMake and MSVC on Windows. These
+ship inside `opencv-python` as ONNX and need neither.
+
+insightface would also work - 1.0.1 ships a pure-Python wheel, so the compiler argument
+against it is no longer true and was corrected here rather than left to rot. Its ArcFace
+weights are 512-d and stronger on cross-pose matches; SFace stays because this task matches
+near-duplicates of a photo the subject posted, the measured margin is +0.51, and swapping
+would cost 300 MB and a re-calibration for no gain on the case at hand.
 
 One non-obvious behaviour, found the hard way (see spike/FINDINGS.md): YuNet returns
 **zero faces on large images**, silently, at any confidence threshold. A 4753x3840
