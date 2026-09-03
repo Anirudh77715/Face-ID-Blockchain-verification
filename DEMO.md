@@ -29,16 +29,21 @@ So:
 npm install && npx hardhat compile
 npx hardhat node               # separate terminal
 py deploy.py --chain local
-py preflight.py --recording    # must exit 0; read every warning
+py preflight.py --e2e --recording   # must exit 0; read every warning
 ```
 
-`preflight --recording` is the whole checklist in one command: models present and
+`preflight --e2e --recording` is the whole checklist in one command: it runs the pipeline
+and asserts all eleven outcomes, including that consent is refused for the wrong image and
+that a revoked attestation reports NOT RELIABLE. It also: models present and
 SHA-256 clean, chromium launching, contract compiled and deployed, tests passing, and a
 warning if the contract already holds attestations - because re-running identical evidence
 sends no transaction, which on camera looks like the chain write silently failing.
 
-- [ ] Your photo is ready — one you have **publicly posted** (profile picture works).
-      Confirm it is findable: search it once, hours before the take, then leave Bing alone.
+- [ ] Your photo is ready — one you have **publicly posted** (profile picture works),
+      plus its public URL for `--image-url`. Confirm it is findable: search it once, hours
+      before the take, then leave the engines alone.
+- [ ] Consent signed: `py consent.py --image me.jpg --subject "Your Name"`.
+- [ ] `py viewer.py` running in a third terminal if you want the visual half.
 - [ ] Two terminals open, font size up, window large enough to read on playback.
 - [ ] `git log --oneline` looks clean.
 - [ ] `evidence/` cleared if you want a tidy run: `rm -rf evidence/`
@@ -66,10 +71,21 @@ py deploy.py --chain local
 
 Point at the contract address and deploy gas.
 
-### 3 — The pipeline, live
+### 3 — Consent (~30s)
 
 ```bash
-py run.py --image me.jpg --image-url "https://<your public photo url>" --chain local --headed
+py consent.py --image me.jpg --subject "Your Name"
+```
+
+Say what it does and why: the statement names the image by SHA-256, so consent for one
+photo cannot authorise a scan of another, and only the hash reaches the chain. This is the
+part that makes a face-search pipeline defensible rather than merely impressive, and almost
+nobody else will have it.
+
+### 4 — The pipeline, live
+
+```bash
+py run.py --image me.jpg --image-url "https://<your public photo url>"           --consent consent.json --chain local --headed
 ```
 
 Pass `--image-url` - the public URL of that same photo. It selects the URL-based backend,
@@ -93,7 +109,7 @@ Narrate as the stages print:
 
 Copy the bundle path it prints.
 
-### 4 — Read it back
+### 5 — Read it back
 
 ```bash
 py verify.py --bundle evidence/run-<id>.json --chain local
@@ -102,7 +118,7 @@ py verify.py --bundle evidence/run-<id>.json --chain local
 All fields match, roots agree, root found on chain, **VERIFIED**. Say plainly: this is the
 data coming back *off* the chain, not just going on.
 
-### 5 — Break it (the point of the build)
+### 6 — Break it (the point of the build)
 
 Open the bundle in an editor, on camera. Change one character of a candidate URL. Save.
 
@@ -113,7 +129,7 @@ py verify.py --bundle evidence/run-<id>.json --chain local
 **TAMPERED**, naming `candidate[N]`, roots differ, recomputed root not on chain, exit 6.
 Undo the edit.
 
-### 6 — Prove one field without revealing the rest
+### 7 — Prove one field without revealing the rest
 
 ```bash
 py verify.py --bundle evidence/run-<id>.json --chain local --disclose 1
@@ -123,7 +139,7 @@ The contract accepts a small inclusion proof for a single candidate. Nothing els
 run was sent on chain to check it — which is why no personal data has to live on a public
 ledger.
 
-### 7 — When it finds nothing
+### 8 — When it finds nothing
 
 ```bash
 py run.py --image spike/noface.jpg --chain local        # exit 4, no face
@@ -132,14 +148,38 @@ py run.py --image spike/noface.jpg --chain local        # exit 4, no face
 Optionally, a real face with no online presence → exit 2, nothing written. Say it: a run
 that finds nothing leaves no attestation behind.
 
-### 8 — Close
+### 9 — Withdraw it
+
+```bash
+py revoke.py --bundle evidence/run-<id>.json --reason "false positive" --yes
+py verify.py --bundle evidence/run-<id>.json --chain local
+```
+
+**NOT RELIABLE**, exit 8 — deliberately not TAMPERED. The evidence is intact; the submitter
+withdrew it. Chain history cannot be erased, so the record stands next to its withdrawal
+and `isLive()` returns false for anyone who asks the contract directly.
+
+### 10 — The viewer (optional, but it films well)
+
+```bash
+py viewer.py        # http://127.0.0.1:8000
+```
+
+Verification runs as four visible steps rather than one verdict, and the tamper simulator
+lets you edit a candidate in the page and watch the root move away from the one on chain,
+live. Nothing is written.
+
+### 11 — Close
 
 `git log --oneline`, and the README's Known limitations section. Naming the rate limit and
 the fact that CAPTCHAs are not bypassed is a strength, not an apology.
 
 ## Length
 
-Six to eight minutes is plenty. The brief says no editing or production is needed, so do
+Eight to ten minutes. Steps 1-7 are the submission; 8-10 are worth including only if the
+pace holds, and 9 and 10 can be dropped entirely without weakening the case. The brief asks
+for face scan -> social post found -> blockchain upload/verification, and steps 4-6 are
+that, so protect those. The brief says no editing or production is needed, so do
 not add any — dead air while the search runs is fine and reads as honest.
 
 ## After

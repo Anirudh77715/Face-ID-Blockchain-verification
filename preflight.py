@@ -357,10 +357,75 @@ def check_end_to_end(r: Report) -> None:
         else:
             r.fail(f"no-face image exited {noface.returncode}, expected 4",
                    "the guardrail is not firing")
+
+        _check_consent(r, workdir)
+        _check_revocation(r, bundle)
     except subprocess.TimeoutExpired:
         r.fail("end-to-end check timed out", "is the local chain responsive?")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _check_consent(r: Report, workdir: Path) -> None:
+    """Consent must bind to one image. A consent that silently authorises a different
+    photo would be worse than none, so the refusal is the behaviour under test."""
+    consent_path = workdir / "consent.json"
+    made = subprocess.run(
+        [sys.executable, "consent.py", "--image", "spike/control_small.jpg",
+         "--subject", "Preflight Subject", "--out", str(consent_path)],
+        cwd=ROOT, capture_output=True, text=True, timeout=180)
+    if made.returncode != 0:
+        r.fail("could not create a consent record", (made.stderr or made.stdout)[-200:])
+        return
+    r.ok("consent signed", "signature self-checks")
+
+    accepted = subprocess.run(
+        [sys.executable, "run.py", "--image", "spike/control_small.jpg",
+         "--chain", "local", "--offline", "--consent", str(consent_path),
+         "--no-chain"],
+        cwd=ROOT, capture_output=True, text=True, timeout=600)
+    if accepted.returncode == 0:
+        r.ok("consent accepted for its own image", "exit 0")
+    else:
+        r.fail(f"a valid consent was rejected (exit {accepted.returncode})",
+               (accepted.stderr or accepted.stdout)[-200:])
+
+    # The same consent against a different image must be refused.
+    mismatched = subprocess.run(
+        [sys.executable, "run.py", "--image", "spike/control.jpg",
+         "--chain", "local", "--offline", "--consent", str(consent_path),
+         "--no-chain"],
+        cwd=ROOT, capture_output=True, text=True, timeout=600)
+    if mismatched.returncode == 6:
+        r.ok("consent refused for a different image", "exit 6")
+    else:
+        r.fail(f"consent for another image was accepted (exit {mismatched.returncode})",
+               "consent must not transfer between photos")
+
+
+def _check_revocation(r: Report, bundle: Path) -> None:
+    """Revoked evidence is intact evidence that should not be relied on - a distinct
+    outcome from tampered, and verify.py has to say which."""
+    revoked = subprocess.run(
+        [sys.executable, "revoke.py", "--bundle", str(bundle), "--chain", "local",
+         "--reason", "preflight check", "--yes"],
+        cwd=ROOT, capture_output=True, text=True, timeout=300)
+    if revoked.returncode != 0:
+        r.fail("could not revoke", (revoked.stderr or revoked.stdout)[-200:])
+        return
+    r.ok("revoke", "attestation withdrawn")
+
+    after = subprocess.run(
+        [sys.executable, "verify.py", "--bundle", str(bundle), "--chain", "local"],
+        cwd=ROOT, capture_output=True, text=True, timeout=300)
+    if after.returncode == 8 and "NOT RELIABLE" in after.stdout:
+        r.ok("verify reports a revoked attestation", "exit 8, NOT RELIABLE")
+    elif after.returncode == 0:
+        r.fail("verify still reports VERIFIED after revocation",
+               "revocation is not being read back")
+    else:
+        r.fail(f"revoked bundle exited {after.returncode}, expected 8",
+               "expected NOT RELIABLE, distinct from TAMPERED")
 
 
 # ----------------------------------------------------------------------------- main

@@ -157,9 +157,22 @@ Both, from one code path in `pom/chain.py`:
 | `--chain local` | 31337 | Hardhat's node. No wallet, no faucet, no key — anyone who clones this can reproduce a full run offline. The brief permits a local/simulated chain explicitly. |
 | `--chain sepolia` | 84532 | Base Sepolia. One real public transaction, independently inspectable in a block explorer. |
 
-Measured on the local chain: **374,249 gas** to deploy. Attestations cost **113,722 gas for
-the first one on a fresh contract** and **96,622 thereafter** — the first write pays for a
-cold storage slot when the roots array is initialised.
+Measured on the local chain by `py scripts/gas.py`, which deploys a throwaway registry so
+the numbers are not skewed by whatever is already stored:
+
+| operation | gas |
+|---|---|
+| deploy the registry | 557,787 |
+| record, no consent (first on a contract) | 121,789 |
+| record, no consent (subsequent) | 104,677 |
+| record, with consent | 124,961 |
+| revoke | 52,979 |
+
+The first record costs more because it pays for the roots array's cold storage slot.
+Consent adds 20,284 gas — one more word written.
+
+These are regenerated rather than remembered. They went stale once already: the struct grew
+two fields for consent and revocation, and the quoted costs silently became wrong.
 
 > Base Sepolia deployment address and transaction hash: _pending — see Known limitations._
 
