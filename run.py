@@ -18,6 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from pom import consent as consent_module
 from pom import evidence
 from pom import match as match_module
 from pom.chain import AlreadyAttested, Chain, ChainError
@@ -50,6 +51,9 @@ def main() -> int:
     ap.add_argument("--headed", action="store_true",
                     help="show the browser window - use this for the screen recording; "
                          "headless is the default because it is more reliable")
+    ap.add_argument("--consent", type=Path,
+                    help="a signed consent record from consent.py. Its hash is committed "
+                         "on chain with the evidence root")
     ap.add_argument("--contract", help="override the deployed address")
     ap.add_argument("--no-chain", action="store_true",
                     help="run the pipeline but skip the write")
@@ -89,6 +93,31 @@ def main() -> int:
     print(f"  detected at {scan.detect_scale}px wide")
     print(f"  embedding   {scan.embedding.shape[-1]}-d  sha256 {scan.embedding_sha256[:32]}")
     print(f"  image       sha256 {scan.image_sha256[:32]}")
+
+    # ------------------------------------------------------------- 1b. consent
+    consent_record, consent_hash = None, None
+    if args.consent:
+        try:
+            record = consent_module.load(args.consent)
+        except Exception as e:
+            print(f"  consent record unreadable: {e}", file=sys.stderr)
+            return 6
+        report = consent_module.verify(record, scan.image_sha256)
+        if not report["ok"]:
+            # Refused rather than warned: a consent that does not cover this image is
+            # worse than no consent, because it looks like authorisation.
+            print("\n  CONSENT REJECTED", file=sys.stderr)
+            for problem in report["problems"]:
+                print(f"    {problem}", file=sys.stderr)
+            return 6
+        consent_record = record.as_dict()
+        consent_hash = bytes.fromhex(record.hash_hex[2:])
+        print(f"  consent     {record.subject} <{record.signer_address}>")
+        print(f"              signed {record.signed_at}, covers this image")
+        print(f"              hash {record.hash_hex[:34]}...")
+    else:
+        print("  consent     [33mnone recorded[0m "
+              "(use --consent; see consent.py)")
 
     # -------------------------------------------------------------- 2. search
     rule("2. REVERSE IMAGE SEARCH")
@@ -132,7 +161,8 @@ def main() -> int:
     # ------------------------------------------------------------ 4. evidence
     rule("4. EVIDENCE BUNDLE")
     bundle = evidence.finalize(evidence.build(
-        scan, response, results, args.threshold, args.image.name))
+        scan, response, results, args.threshold, args.image.name,
+        consent_record=consent_record))
     root_hex = bundle["merkle"]["root"]
     print(f"  leaves      {bundle['merkle']['leaf_count']}")
     print(f"  root        {root_hex}")
@@ -159,7 +189,8 @@ def main() -> int:
     root = bytes.fromhex(root_hex[2:])
     try:
         chain = Chain(args.chain)
-        receipt = chain.record(root, len(results), True, address=args.contract)
+        receipt = chain.record(root, len(results), True, address=args.contract,
+                               consent_hash=consent_hash)
     except AlreadyAttested as e:
         # Identical evidence hashes to an identical root by design, so a rerun collides.
         # The commitment is already there, so this is reported rather than failed -

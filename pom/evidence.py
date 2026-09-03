@@ -31,6 +31,7 @@ def build(
     results: list[MatchResult],
     threshold: float,
     source_name: str,
+    consent_record: dict | None = None,
 ) -> dict:
     accepted = [r for r in results if r.accepted]
     best = sorted(accepted, key=lambda r: (not r.social, -(r.similarity or 0)))
@@ -58,6 +59,10 @@ def build(
             "candidates_returned": len(search.candidates),
         },
         "threshold": threshold,
+        # Present only when the run carried consent. Absent is a distinct state from
+        # present-and-invalid, and the leaf set reflects that rather than committing a
+        # placeholder that would look like a real record.
+        **({"consent": consent_record} if consent_record else {}),
         "candidates": [r.as_dict() for r in results],
         "decision": {
             "matched": best is not None,
@@ -86,6 +91,8 @@ def leaves(bundle: dict) -> list[tuple[str, bytes]]:
         ("search.raw_sha256", s["raw_sha256"]),
         ("threshold", bundle["threshold"]),
     ]
+    if "consent" in bundle:
+        items.append(("consent", bundle["consent"]))
     for i, c in enumerate(bundle["candidates"]):
         items.append((f"candidate[{i}]", {
             "page_url": c["page_url"],

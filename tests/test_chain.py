@@ -8,10 +8,17 @@ from __future__ import annotations
 import json
 
 import pytest
+from eth_utils import keccak
 from web3.exceptions import ContractLogicError
 
 from pom import merkle as M
-from pom.chain import AlreadyAttested, Chain, ChainError
+from pom.chain import (
+    AlreadyAttested,
+    Chain,
+    ChainError,
+    NotSubmitter,
+    Revoked,
+)
 
 pytestmark = pytest.mark.needs_chain
 
@@ -150,3 +157,101 @@ def test_deploy_does_not_persist_unless_asked(chain, tmp_path, monkeypatch):
     chain.deploy(remember=True)
     assert marker.exists()
     assert "local" in json.loads(marker.read_text(encoding="utf-8"))
+
+
+# --------------------------------------------------------------- consent + revocation
+
+def test_consent_hash_round_trips(chain, deployed):
+    lv = leaves("consent")
+    root = M.root(lv)
+    consent = keccak(b"a signed consent record")
+    chain.record(root, len(lv), True, address=deployed, consent_hash=consent)
+
+    stored = chain.get(root, address=deployed)
+    assert stored["has_consent"]
+    assert stored["consent_hash"] == "0x" + consent.hex()
+
+
+def test_an_attestation_without_consent_is_distinguishable(chain, deployed):
+    """Absent consent must not look like recorded consent."""
+    lv = leaves("noconsent")
+    root = M.root(lv)
+    chain.record(root, len(lv), True, address=deployed)
+    assert chain.get(root, address=deployed)["has_consent"] is False
+
+
+def test_revoking_marks_it_not_live_without_erasing_it(chain, deployed):
+    lv = leaves("revokeme")
+    root = M.root(lv)
+    chain.record(root, len(lv), True, address=deployed)
+    assert chain.is_live(root, address=deployed)
+
+    chain.revoke(root, keccak(b"wrong match"), address=deployed)
+
+    assert not chain.is_live(root, address=deployed), "consumers must see it withdrawn"
+    assert chain.exists(root, address=deployed), "history cannot be erased"
+    assert chain.get(root, address=deployed)["revoked"]
+    assert chain.get(root, address=deployed)["revoked_at"] > 0
+
+
+def test_revoking_twice_is_refused(chain, deployed):
+    lv = leaves("revoketwice")
+    root = M.root(lv)
+    chain.record(root, len(lv), True, address=deployed)
+    chain.revoke(root, address=deployed)
+    with pytest.raises(Revoked, match="already revoked"):
+        chain.revoke(root, address=deployed)
+
+
+def test_revoking_an_unknown_root_is_refused(chain, deployed):
+    with pytest.raises(ChainError, match="no attestation"):
+        chain.revoke(M.root(leaves("never")), address=deployed)
+
+
+def test_only_the_submitter_may_revoke(chain, deployed):
+    """A registry where anyone can withdraw anyone's record is worse than one with no
+    revocation at all."""
+    from pom.chain import Chain as ChainCls
+
+    lv = leaves("otherparty")
+    root = M.root(lv)
+    chain.record(root, len(lv), True, address=deployed)
+
+    stranger = ChainCls("local")
+    # Hardhat's second pre-funded dev account - a different signer, same chain.
+    stranger.account = stranger.w3.eth.account.from_key(
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+
+    with pytest.raises(NotSubmitter, match="only the submitter"):
+        stranger.revoke(root, address=deployed)
+
+    assert chain.is_live(root, address=deployed), "a stranger must not be able to revoke"
+
+
+def test_revocation_survives_a_fresh_read(chain, deployed):
+    lv = leaves("persist")
+    root = M.root(lv)
+    chain.record(root, len(lv), True, address=deployed)
+    chain.revoke(root, address=deployed)
+
+    from pom.chain import Chain as ChainCls
+    assert not ChainCls("local").is_live(root, address=deployed)
+
+
+def test_revert_reasons_are_explained(chain):
+    """`execution reverted: ... AlreadyRecorded(0x..)` is accurate and unreadable."""
+    assert "already attested" in chain._explain(Exception("reverted AlreadyRecorded(0x1)"))
+    assert "only the account" in chain._explain(Exception("reverted NotSubmitter(0x1)"))
+    assert "no attestation exists" in chain._explain(Exception("reverted UnknownRoot(0x1)"))
+
+
+def test_local_chain_needs_one_confirmation():
+    from pom.chain import NETWORKS
+    assert NETWORKS["local"]["confirmations"] == 1
+
+
+def test_a_public_chain_waits_for_more_than_one():
+    """A just-mined block can reorg out, leaving a bundle citing a transaction that
+    never happened."""
+    from pom.chain import NETWORKS
+    assert NETWORKS["sepolia"]["confirmations"] > 1

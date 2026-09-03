@@ -27,10 +27,16 @@ ARTIFACT = (ROOT_DIR / "artifacts" / "contracts" / "AttestationRegistry.sol"
             / "AttestationRegistry.json")
 DEPLOYMENTS = ROOT_DIR / "deployments.json"
 
+# bytes32(0). Means "no consent recorded" in an attestation, and "no reason given" in a
+# revocation - the contract treats both as absent rather than as a value.
+ZERO32 = bytes(32)
+
 NETWORKS = {
     "local": {
         "rpc": "http://127.0.0.1:8545",
         "chain_id": 31337,
+        # A single-node dev chain cannot reorg, so one block is final.
+        "confirmations": 1,
         # Hardhat's first pre-funded development account. This key is published in
         # Hardhat's own documentation and is worthless by construction — it exists so
         # local runs need no setup. Never send real funds to it.
@@ -42,6 +48,9 @@ NETWORKS = {
     "sepolia": {
         "rpc": os.environ.get("BASE_SEPOLIA_RPC", "https://sepolia.base.org"),
         "chain_id": 84532,
+        # A public chain can reorg a freshly mined block back out of existence, which
+        # would leave a bundle pointing at a transaction that no longer happened.
+        "confirmations": 3,
         "key_env": "PRIVATE_KEY",
         "default_key": None,
         "explorer": "https://sepolia.basescan.org/tx/",
@@ -75,6 +84,14 @@ class AlreadyAttested(ChainError):
             "  succeed. To produce a fresh transaction, redeploy (py deploy.py) or run\n"
             "  against a different image."
         )
+
+
+class Revoked(ChainError):
+    """The attestation exists but has been withdrawn."""
+
+
+class NotSubmitter(ChainError):
+    """Only the account that recorded an attestation may revoke it."""
 
 
 @dataclass
@@ -126,6 +143,25 @@ class Chain:
 
     # ------------------------------------------------------------------ plumbing
 
+    @staticmethod
+    def _explain(error: Exception) -> str:
+        """Turn a raw revert into the sentence a person can act on.
+
+        web3 surfaces a custom error as `execution reverted: ... AlreadyRecorded(0x..)`,
+        which is accurate and unreadable.
+        """
+        text = str(error)
+        for name, meaning in (
+            ("AlreadyRecorded", "this evidence root is already attested"),
+            ("AlreadyRevoked", "this attestation was already revoked"),
+            ("NotSubmitter", "only the account that recorded it may revoke it"),
+            ("UnknownRoot", "no attestation exists for that root"),
+            ("EmptyRoot", "a zero root cannot be recorded"),
+        ):
+            if name in text:
+                return f"{meaning} ({name})"
+        return text
+
     def _send(self, tx) -> tuple[str, dict]:
         tx.setdefault("from", self.account.address)
         tx.setdefault("nonce", self.w3.eth.get_transaction_count(self.account.address))
@@ -136,10 +172,35 @@ class Chain:
         signed = self.account.sign_transaction(tx)
         raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction
         tx_hash = self.w3.eth.send_raw_transaction(raw)
-        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
         if receipt["status"] != 1:
-            raise ChainError(f"transaction reverted: {tx_hash.hex()}")
+            raise ChainError(f"transaction reverted: {_hex(tx_hash)}")
+
+        self._await_confirmations(receipt["blockNumber"])
         return tx_hash.hex(), receipt
+
+    def _await_confirmations(self, block: int) -> None:
+        """Wait until the block is buried deep enough to rely on.
+
+        On the local chain this returns immediately. On a public one, treating a
+        just-mined block as settled is how a bundle ends up citing a transaction that a
+        reorg removed.
+        """
+        import time as _time
+
+        wanted = NETWORKS[self.network].get("confirmations", 1)
+        if wanted <= 1:
+            return
+
+        deadline = _time.time() + 300
+        while _time.time() < deadline:
+            depth = self.w3.eth.block_number - block + 1
+            if depth >= wanted:
+                return
+            _time.sleep(3)
+        raise ChainError(
+            f"only reached {self.w3.eth.block_number - block + 1} of {wanted} "
+            f"confirmations for block {block}")
 
     # ------------------------------------------------------------------- deploy
 
@@ -192,7 +253,7 @@ class Chain:
     # -------------------------------------------------------------- read/write
 
     def record(self, root: bytes, candidate_count: int, matched: bool,
-               address: str | None = None) -> Receipt:
+               address: str | None = None, consent_hash: bytes | None = None) -> Receipt:
         c = self.contract(address)
 
         # Checked before sending rather than caught after, so no gas is spent and the
@@ -204,7 +265,9 @@ class Chain:
                 c.address,
             )
 
-        tx = c.functions.record(root, candidate_count, matched).build_transaction({
+        tx = c.functions.record(
+            root, candidate_count, matched, consent_hash or (ZERO32)
+        ).build_transaction({
             "from": self.account.address,
             "nonce": self.w3.eth.get_transaction_count(self.account.address),
             "chainId": NETWORKS[self.network]["chain_id"],
@@ -215,9 +278,49 @@ class Chain:
                        c.address, self.network)
 
     def get(self, root: bytes, address: str | None = None) -> dict:
-        ts, count, matched, submitter = self.contract(address).functions.get(root).call()
-        return {"timestamp": ts, "candidate_count": count,
-                "matched": matched, "submitter": submitter}
+        (ts, count, matched, submitter, consent_hash,
+         revoked_at, reason) = self.contract(address).functions.get(root).call()
+        return {
+            "timestamp": ts,
+            "candidate_count": count,
+            "matched": matched,
+            "submitter": submitter,
+            "consent_hash": "0x" + consent_hash.hex(),
+            "has_consent": consent_hash != ZERO32,
+            "revoked_at": revoked_at,
+            "revoked": revoked_at != 0,
+            "revocation_reason": "0x" + reason.hex(),
+        }
+
+    def is_live(self, root: bytes, address: str | None = None) -> bool:
+        """Recorded and not withdrawn - the question a consumer should ask. `exists`
+        stays true forever once written, including for revoked records."""
+        return self.contract(address).functions.isLive(root).call()
+
+    def revoke(self, root: bytes, reason: bytes | None = None,
+               address: str | None = None) -> Receipt:
+        """Withdraw an attestation. The record stays; readers learn not to rely on it."""
+        c = self.contract(address)
+        if not c.functions.exists(root).call():
+            raise ChainError(f"no attestation exists for root 0x{root.hex()}")
+
+        stored = self.get(root, address=address)
+        if stored["revoked"]:
+            raise Revoked(f"already revoked at {stored['revoked_at']}")
+        if stored["submitter"].lower() != self.account.address.lower():
+            raise NotSubmitter(
+                f"recorded by {stored['submitter']}, "
+                f"signing as {self.account.address} - only the submitter may revoke")
+
+        tx = c.functions.revoke(root, reason or (ZERO32)).build_transaction({
+            "from": self.account.address,
+            "nonce": self.w3.eth.get_transaction_count(self.account.address),
+            "chainId": NETWORKS[self.network]["chain_id"],
+            "gasPrice": self.w3.eth.gas_price,
+        })
+        tx_hash, receipt = self._send(tx)
+        return Receipt(_hex(tx_hash), receipt["blockNumber"], receipt["gasUsed"],
+                       c.address, self.network)
 
     def exists(self, root: bytes, address: str | None = None) -> bool:
         return self.contract(address).functions.exists(root).call()

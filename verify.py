@@ -19,6 +19,8 @@ Exit codes:
     1  usage or connection problem
     6  TAMPERED: the evidence no longer matches what was committed
     7  the root is not on chain at all
+    8  NOT RELIABLE: the evidence is intact, but the attestation was revoked or its
+       consent does not hold
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from pom import consent as consent_module
 from pom import evidence, merkle
 from pom.chain import Chain, ChainError
 
@@ -53,6 +56,7 @@ def main() -> int:
         return 1
 
     bundle = evidence.load(args.bundle)
+    revoked_or_tampered = False
     committed = bundle.get("merkle", {}).get("root")
     attestation = bundle.get("attestation", {})
 
@@ -104,7 +108,51 @@ def main() -> int:
         print(f"  block       {attestation.get('block')}")
         print(f"  recorded at {record['timestamp']} by {record['submitter']}")
         print(f"  candidates  {record['candidate_count']}   matched {record['matched']}")
+        print("  live        " + (f"{GREEN}yes{OFF}"
+              if chain.is_live(root_bytes, address=address)
+              else f"{RED}no - revoked{OFF}"))
         print(f"  {GREEN}root found on chain{OFF}")
+
+        # ------------------------------------------------------------ consent
+        rule("3b. CONSENT")
+        if not record["has_consent"]:
+            print(f"  {YELLOW}no consent hash was recorded for this attestation{OFF}")
+            print("  The scan may still have been authorised - the chain simply does")
+            print("  not say so. That is a weaker claim than a recorded consent.")
+        elif "consent" not in bundle:
+            print(f"  {RED}the chain records a consent hash, but the bundle has no "
+                  f"consent record{OFF}")
+            print(f"  on chain: {record['consent_hash']}")
+            revoked_or_tampered = True
+        else:
+            stored = consent_module.ConsentRecord(**bundle["consent"])
+            report = consent_module.verify(stored, bundle["query"]["image_sha256"])
+            matches_chain = stored.hash_hex.lower() == record["consent_hash"].lower()
+
+            print(f"  subject     {stored.subject}")
+            print(f"  signer      {stored.signer_address}")
+            print(f"  signed at   {stored.signed_at}")
+            print("  signature   " + (f"{GREEN}valid{OFF}" if report["signature_valid"]
+                                       else f"{RED}INVALID{OFF}"))
+            print("  covers      " + (f"{GREEN}this exact image{OFF}"
+                                       if report["image_matches"]
+                                       else f"{RED}A DIFFERENT IMAGE{OFF}"))
+            print("  hash        " + (f"{GREEN}matches the chain{OFF}" if matches_chain
+                                       else f"{RED}DIFFERS FROM THE CHAIN{OFF}"))
+            for problem in report["problems"]:
+                print(f"    {RED}{problem}{OFF}")
+            if not (report["ok"] and matches_chain):
+                revoked_or_tampered = True
+
+        # --------------------------------------------------------- revocation
+        if record["revoked"]:
+            rule("3c. REVOCATION")
+            print(f"  {RED}{BOLD}this attestation was withdrawn{OFF}")
+            print(f"  revoked at  {record['revoked_at']}")
+            print("  The evidence may still be intact, but the submitter has said it")
+            print("  should no longer be relied on. Chain history cannot be erased,")
+            print("  so the record stands alongside its withdrawal.")
+            revoked_or_tampered = True
 
         # ------------------------------------------ optional selective disclosure
         if args.disclose is not None:
@@ -133,6 +181,12 @@ def main() -> int:
 
     # ----------------------------------------------------------------- verdict
     rule("VERDICT")
+    if revoked_or_tampered and not (diverged or not root_ok):
+        print(f"  {YELLOW}{BOLD}NOT RELIABLE{OFF}")
+        print("  The evidence matches its commitment, but the attestation is revoked")
+        print("  or its consent does not hold. See above.")
+        return 8
+
     if diverged or not root_ok:
         print(f"  {RED}{BOLD}TAMPERED{OFF}")
         print("  The evidence has changed since it was committed. Fields affected:")

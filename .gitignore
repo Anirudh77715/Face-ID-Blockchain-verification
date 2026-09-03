@@ -10,3 +10,4 @@ models/*.onnx
 artifacts/
 cache/
 deployments.json
+consent.json
