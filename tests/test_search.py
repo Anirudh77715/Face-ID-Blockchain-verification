@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -299,3 +300,92 @@ def test_replay_can_use_a_bing_url_capture(tmp_path, monkeypatch, reference_html
     monkeypatch.setattr(S, "RAW_DIR", raw)
     response = Replay().search(tmp_path / "unused.jpg")
     assert response.raw_path == str(capture), "bing_url captures must be replayable"
+
+
+# ---------------------------------------------------------------- yandex parsing
+
+def yandex_html(sites: list[dict]) -> str:
+    """Minimal page carrying Yandex's embedded cbirSites object.
+
+    Synthetic on purpose: the parser's contract is that structure, and a 600 KB captured
+    page in the repo would test the same thing while costing every clone the bytes.
+    """
+    return ('<html><body><script>window.__INITIAL__={"cbirSites":'
+            + json.dumps({"sites": sites}) + '};</script></body></html>')
+
+
+def site(url, original="https://cdn.example/a.jpg", thumb="//tb.yandex/a.jpg"):
+    return {"title": "t", "description": "d", "url": url, "domain": "example.com",
+            "thumb": {"url": thumb, "height": 90, "width": 148},
+            "originalImage": {"url": original, "height": 981, "width": 736}}
+
+
+def test_yandex_parses_sites():
+    from pom.search import YandexUrl
+    got = YandexUrl._parse(yandex_html([
+        site("https://www.instagram.com/p/abc/"),
+        site("https://example.org/page"),
+    ]))
+    assert len(got) == 2
+    assert got[0].social and not got[1].social
+
+
+def test_yandex_carries_a_fetchable_fallback():
+    """Yandex hosts its own copy, which fetches when the source CDN hotlink-blocks."""
+    from pom.search import YandexUrl
+    c = YandexUrl._parse(yandex_html([site("https://x.com/1")]))[0]
+    assert c.image_url == "https://cdn.example/a.jpg"
+    assert c.image_fallback == "https://tb.yandex/a.jpg", "must be absolute"
+
+
+def test_yandex_absolutises_protocol_relative_thumbs():
+    from pom.search import YandexUrl
+    c = YandexUrl._parse(yandex_html([site("https://x.com/1", thumb="//tb/x.png")]))[0]
+    assert c.image_fallback.startswith("https://")
+
+
+def test_yandex_falls_back_to_the_thumb_when_there_is_no_original():
+    from pom.search import YandexUrl
+    got = YandexUrl._parse(yandex_html([
+        {"url": "https://x.com/1", "thumb": {"url": "//tb/x.png"}},
+    ]))
+    assert got[0].image_url == "https://tb/x.png"
+
+
+def test_yandex_deduplicates():
+    from pom.search import YandexUrl
+    got = YandexUrl._parse(yandex_html([site("https://x.com/1"), site("https://x.com/1")]))
+    assert len(got) == 1
+
+
+def test_yandex_survives_pages_without_results():
+    from pom.search import YandexUrl
+    assert YandexUrl._parse("<html>nothing</html>") == []
+    assert YandexUrl._parse("") == []
+
+
+def test_yandex_survives_malformed_embedded_json():
+    from pom.search import YandexUrl
+    assert YandexUrl._parse('<script>x={"cbirSites":{BROKEN}}</script>') == []
+
+
+def test_yandex_skips_entries_without_a_url():
+    from pom.search import YandexUrl
+    got = YandexUrl._parse(yandex_html([{"title": "no url"}, site("https://x.com/1")]))
+    assert len(got) == 1
+
+
+def test_yandex_requires_an_image_url(tmp_path):
+    from pom.search import YandexUrl
+    with pytest.raises(SearchUnavailable, match="image-url"):
+        YandexUrl().search(tmp_path / "x.jpg")
+
+
+def test_auto_puts_an_independent_index_behind_bing():
+    """Two Bing routes share a failure mode; the fallback that helps when Bing itself is
+    challenged has to be a different provider."""
+    from pom.search import Auto
+    names = [b.name for b in Auto()._chain("https://example.com/me.jpg")]
+    assert names[0] == "bing_url"
+    assert "yandex_url" in names
+    assert names.index("yandex_url") < names.index("bing_scripted")

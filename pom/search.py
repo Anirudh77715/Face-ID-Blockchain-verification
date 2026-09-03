@@ -7,6 +7,8 @@ if one happens to be configured.
   auto           tries the others in order and uses the first that returns results
   bing_url       free, no key, no upload. Needs --image-url. Measured best: it kept
                  working while the upload flow was being challenged on the same machine.
+  yandex_url     free, no key, no upload. A genuinely independent index, so it is the
+                 fallback that helps when Bing itself is the thing being challenged.
   bing_scripted  free, no key, uploads the file. Works cold; rate-limits into a
                  human-verification challenge under repeated automated use.
   serpapi        free tier (100/month). Needs a key and a publicly reachable image URL.
@@ -290,6 +292,120 @@ class BingUrl:
         return SearchResponse(self.name, queried_at, str(path), digest, candidates)
 
 
+# --------------------------------------------------------------------------- yandex
+
+class YandexUrl:
+    """Yandex reverse image search, from an image URL.
+
+    Worth carrying despite the extra parser: the two Bing backends share an index and a
+    failure mode, so a chain of them is one provider wearing two hats. Yandex is a
+    genuinely independent index and historically the strongest of the free engines on
+    faces.
+
+    Results live in an embedded `cbirSites` object - Yandex's "sites with information
+    about the image" - which carries both the source page and two image URLs per hit.
+    """
+
+    name = "yandex_url"
+
+    def __init__(self, headed: bool = False, timeout_ms: int = 45_000):
+        self.headed = headed
+        self.timeout_ms = timeout_ms
+
+    def search(self, image_path: Path, image_url: str | None = None,
+               **_) -> SearchResponse:
+        from playwright.sync_api import sync_playwright
+
+        if not image_url:
+            raise SearchUnavailable(
+                "yandex_url needs --image-url: a publicly reachable copy of the image.")
+
+        queried_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        target = ("https://yandex.com/images/search?rpt=imageview&url="
+                  + quote(image_url, safe=""))
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=not self.headed)
+            ctx = browser.new_context(locale="en-US", user_agent=UA,
+                                      viewport={"width": 1400, "height": 900})
+            page = ctx.new_page()
+            try:
+                page.goto(target, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                page.wait_for_timeout(7_000)
+                html = page.content()
+            finally:
+                ctx.close()
+                browser.close()
+
+        path, digest = _persist(self.name, html.encode("utf-8"))
+        if any(m in html.lower() for m in CHALLENGE_MARKERS):
+            raise SearchBlocked(
+                "Yandex served a human-verification challenge. "
+                "Not bypassed by design.\n"
+                f"  raw response: {path}")
+
+        candidates = self._parse(html)
+        if not candidates:
+            raise SearchUnavailable(
+                f"yandex_url returned no parseable sites (raw: {path})")
+        return SearchResponse(self.name, queried_at, str(path), digest, candidates)
+
+    @staticmethod
+    def _parse(html: str) -> list[Candidate]:
+        text = html_lib.unescape(html)
+
+        marker = '"cbirSites":'
+        start = text.find(marker)
+        if start < 0:
+            return []
+
+        # Brace-match the cbirSites object rather than regexing its fields: the site
+        # entries contain free-text titles and descriptions, which a field-level regex
+        # would happily run past.
+        i = text.find("{", start + len(marker))
+        if i < 0:
+            return []
+        depth, end = 0, -1
+        for j in range(i, min(len(text), i + 400_000)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+        if end < 0:
+            return []
+
+        try:
+            sites = json.loads(text[i:end]).get("sites", [])
+        except json.JSONDecodeError:
+            return []
+
+        out, seen = [], set()
+        for site in sites:
+            page_url = site.get("url", "")
+            if not page_url or page_url in seen:
+                continue
+            seen.add(page_url)
+
+            original = (site.get("originalImage") or {}).get("url", "")
+            thumb = (site.get("thumb") or {}).get("url", "")
+            # Yandex serves protocol-relative thumbnail URLs.
+            if thumb.startswith("//"):
+                thumb = "https:" + thumb
+
+            out.append(Candidate(
+                page_url=page_url,
+                image_url=original or thumb,
+                social=is_social(page_url),
+                # Yandex hosts its own copy, so it fetches when the source CDN
+                # hotlink-blocks - the same reason the Bing backends carry a fallback.
+                image_fallback=thumb if original else "",
+            ))
+        return out
+
+
 # ------------------------------------------------------------------------- serpapi
 
 class SerpApi:
@@ -460,6 +576,9 @@ class Auto:
         # being challenged on the same machine.
         if image_url:
             yield BingUrl(headed=self.headed)
+            # A genuinely different index. Two Bing routes share a failure mode; this is
+            # the fallback that actually helps when Bing is the thing being challenged.
+            yield YandexUrl(headed=self.headed)
         yield BingScripted(headed=self.headed)
         if os.environ.get("SERPAPI_KEY") and image_url:
             yield SerpApi()
@@ -488,6 +607,7 @@ class Auto:
 BACKENDS = {
     "auto": Auto,
     "bing_url": BingUrl,
+    "yandex_url": YandexUrl,
     "bing_scripted": BingScripted,
     "serpapi": SerpApi,
     "replay": Replay,

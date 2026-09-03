@@ -72,15 +72,22 @@ The input for this task is a photo the subject has publicly posted, which means 
 URL for it already exists — so the upload flow is avoidable entirely. That matters more
 than it sounds. Measured on the same machine and the same image:
 
-| backend | key | candidates | accepted |
-|---|---|---|---|
-| `bing_url` | none | 38 | **11 / 12** |
-| `serpapi` | required | 10 | 6 / 10 |
-| `bing_scripted` | none | 21 | 10 / 12 |
+| backend | key | candidates | social | accepted | similarity range |
+|---|---|---|---|---|---|
+| **`yandex_url`** | none | **327** | **64** | 8 / 12 | 0.91 – 0.98 |
+| `bing_url` | none | 38 | 12 | 11 / 12 | 0.77 – 0.97 |
+| `bing_scripted` | none | 21 | 7 | 10 / 12 | 0.77 – 0.97 |
+| `serpapi` | required | 10 | 5 | 6 / 10 | 0.73 – 0.95 |
 
 `bing_url` was returning results while `bing_scripted` was being served
 human-verification challenges on that same machine — it is a plain page load rather than a
-scripted upload form, so there is less to trip over. Pass `--image-url` to enable it.
+scripted upload form, so there is less to trip over.
+
+`auto` tries `bing_url`, then `yandex_url`, then the upload flow. The ordering matters more
+than the ranking: two Bing routes share an index and a failure mode, so a chain of them is
+one provider wearing two hats. Yandex is a genuinely independent index, which makes it the
+fallback that actually helps when Bing is the thing being challenged. Pass `--image-url` to
+enable both.
 
 
 A reverse image search returns pages that are *visually similar*. That is not the same

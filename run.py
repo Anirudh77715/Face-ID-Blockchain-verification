@@ -37,7 +37,8 @@ def main() -> int:
     ap.add_argument("--image", required=True, type=Path)
     ap.add_argument("--chain", default="local", choices=("local", "sepolia"))
     ap.add_argument("--backend", default="auto",
-                    choices=("auto", "bing_url", "bing_scripted", "serpapi", "replay"),
+                    choices=("auto", "bing_url", "yandex_url", "bing_scripted",
+                             "serpapi", "replay"),
                     help="auto tries the no-key backends in order and uses the first that "
                          "returns results; replay re-parses a saved response for "
                          "development, performs no query, and is recorded as such")
@@ -135,7 +136,7 @@ def main() -> int:
     # -------------------------------------------------------------- 2. search
     rule("2. REVERSE IMAGE SEARCH")
     backend = (get_backend(args.backend, headed=args.headed)
-               if args.backend in ("auto", "bing_url", "bing_scripted")
+               if args.backend in ("auto", "bing_url", "yandex_url", "bing_scripted")
                else get_backend(args.backend))
     if backend.name == "replay":
         print("  [33mREPLAY - no live query; this is a development run[0m")
