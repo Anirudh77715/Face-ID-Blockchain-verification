@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>proof-of-match</title>
+<style>
+:root{
+  --bg:#0b0d12; --panel:#131722; --panel2:#171c28; --line:#232a3a;
+  --text:#e8ecf4; --dim:#7d8799; --faint:#4a5265;
+  --ok:#35d07f; --bad:#ff5f56; --warn:#ffbd2e; --accent:#5b8cff; --violet:#a78bfa;
+  --r:10px;
+  --e:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  -webkit-font-smoothing:antialiased}
+
+/* ---------------------------------------------------------------- motion */
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes flow{to{background-position:200% 0}}
+@keyframes pop{0%{transform:scale(.85);opacity:0}60%{transform:scale(1.04)}100%{transform:scale(1);opacity:1}}
+@keyframes shake{10%,90%{transform:translateX(-2px)}30%,70%{transform:translateX(3px)}50%{transform:translateX(-3px)}}
+
+.rise{animation:rise .5s var(--e) both}
+.pop{animation:pop .38s var(--e) both}
+.shake{animation:shake .5s both}
+
+/* ---------------------------------------------------------------- chrome */
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;
+  border-bottom:1px solid var(--line);background:rgba(11,13,18,.9);
+  position:sticky;top:0;z-index:20;backdrop-filter:blur(8px)}
+h1{font-size:15px;margin:0;letter-spacing:.04em}
+h1 em{font-style:normal;color:var(--accent)}
+.tag{font-size:11px;color:var(--dim);border:1px solid var(--line);
+  padding:2px 8px;border-radius:20px}
+.spacer{margin-left:auto}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+  background:var(--ok);margin-right:6px;animation:pulse 2.4s infinite}
+.dot.off{background:var(--bad)}
+
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit;font-size:12.5px;
+  transition:border-color .2s,background .2s,transform .12s var(--e)}
+button:hover{border-color:var(--accent);background:#1c2333}
+button:active{transform:translateY(1px)}
+button.primary{border-color:var(--accent);color:#cfe0ff}
+button.danger:hover{border-color:var(--bad)}
+button[disabled]{opacity:.45;cursor:not-allowed}
+
+main{display:grid;grid-template-columns:264px 1fr;min-height:calc(100vh - 55px)}
+aside{border-right:1px solid var(--line);padding:14px;overflow:auto}
+section{padding:20px 24px 60px;overflow:auto}
+
+.run{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);
+  margin-bottom:8px;cursor:pointer;background:var(--panel);
+  transition:border-color .2s,transform .18s var(--e),background .2s}
+.run:hover{border-color:var(--faint);transform:translateX(2px)}
+.run.on{border-color:var(--accent);background:#161e30}
+.run b{display:block;font-size:12.5px;letter-spacing:.02em}
+.run span{display:block;color:var(--dim);font-size:11px}
+
+/* ------------------------------------------------------------- pipeline */
+.pipe{display:grid;grid-template-columns:1fr 44px 1fr 44px 1fr;align-items:center;
+  margin-bottom:18px}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:13px 15px;position:relative;overflow:hidden}
+.stage .n{font-size:10.5px;color:var(--faint);letter-spacing:.14em}
+.stage .t{font-size:13px;margin-top:3px;letter-spacing:.03em}
+.stage .v{font-size:11.5px;color:var(--dim);margin-top:5px}
+.stage::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:100%;
+  transform-origin:left;transform:scaleX(0);background:var(--accent)}
+.stage.done::after{animation:grow .6s var(--e) forwards}
+.stage.done{border-color:#2b3450}
+.stage.s2::after{background:var(--violet)}
+.stage.s3::after{background:var(--ok)}
+.link{height:2px;background:linear-gradient(90deg,var(--line),var(--faint),var(--line));
+  background-size:200% 100%;animation:flow 2.6s linear infinite}
+
+/* ---------------------------------------------------------------- cards */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:14px}
+.card h2{margin:0 0 12px;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--faint);font-weight:600;display:flex;align-items:center;gap:9px}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:12.5px}
+.kv>div:nth-child(odd){color:var(--dim)}
+.mono{overflow-wrap:anywhere;font-size:12px}
+.hash{color:var(--violet);overflow-wrap:anywhere}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;padding:6px 8px;color:var(--faint);font-size:10.5px;
+  letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr{animation:rise .4s var(--e) both}
+tbody tr.rejected{opacity:.5}
+tbody tr:hover{background:#161b27}
+td.url{max-width:420px;overflow-wrap:anywhere}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.bar{height:4px;background:#1e2534;border-radius:3px;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;background:var(--ok);width:0;
+  transition:width .9s var(--e)}
+.bar i.no{background:var(--faint)}
+
+.pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10.5px;
+  border:1px solid var(--line);letter-spacing:.04em;white-space:nowrap}
+.pill.ok{border-color:rgba(53,208,127,.5);color:var(--ok)}
+.pill.bad{border-color:rgba(255,95,86,.5);color:var(--bad)}
+.pill.warn{border-color:rgba(255,189,46,.5);color:var(--warn)}
+.pill.v{border-color:rgba(167,139,250,.5);color:var(--violet)}
+
+.ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
+.empty{color:var(--dim);padding:44px 0;text-align:center}
+
+/* --------------------------------------------------------- verification */
+.steps{display:flex;flex-direction:column;gap:9px;margin-top:14px}
+.step{display:flex;align-items:center;gap:11px;font-size:12.5px;opacity:.3;
+  transition:opacity .35s var(--e)}
+.step.live,.step.done{opacity:1}
+.step .ic{width:17px;height:17px;border-radius:50%;border:2px solid var(--faint);
+  flex:none;display:grid;place-items:center;font-size:10px;
+  transition:border-color .3s,background .3s}
+.step.live .ic{border-color:var(--accent);border-right-color:transparent;
+  animation:spin .7s linear infinite}
+.step.pass .ic{border-color:var(--ok);background:rgba(53,208,127,.14);color:var(--ok)}
+.step.fail .ic{border-color:var(--bad);background:rgba(255,95,86,.14);color:var(--bad)}
+.step .detail{color:var(--dim);font-size:11.5px;margin-left:auto}
+
+.verdict{font-size:22px;font-weight:700;letter-spacing:.06em;margin-top:16px}
+
+/* ------------------------------------------------------------ simulator */
+.sim{border:1px dashed var(--line);border-radius:var(--r);padding:14px;margin-top:12px;
+  background:#10141d}
+.sim input{width:100%;background:#0c1017;border:1px solid var(--line);color:var(--text);
+  border-radius:7px;padding:7px 10px;font:inherit;font-size:12px;
+  transition:border-color .2s}
+.sim input:focus{outline:none;border-color:var(--accent)}
+.sim label{display:block;font-size:10.5px;color:var(--faint);letter-spacing:.1em;
+  text-transform:uppercase;margin:9px 0 4px}
+.simout{margin-top:12px;font-size:12px;min-height:20px}
+
+@media (max-width:900px){
+  main{grid-template-columns:1fr}
+  aside{border-right:none;border-bottom:1px solid var(--line);max-height:170px}
+  .pipe{grid-template-columns:1fr;gap:8px}
+  .link{display:none}
+  .kv{grid-template-columns:1fr;gap:2px}
+  .kv>div:nth-child(even){margin-bottom:8px}
+  td.url{max-width:none}
+  section{padding:14px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+}
+</style></head><body>
+
+<header>
+  <h1>proof<em>&middot;</em>of<em>&middot;</em>match</h1>
+  <span class="tag">local evidence viewer</span>
+  <span class="tag" id="chain"><span class="dot off"></span>connecting</span>
+  <span class="spacer"></span>
+  <button onclick="loadRuns(true)">Refresh</button>
+</header>
+
+<main>
+  <aside id="runs"><div class="empty">loading&hellip;</div></aside>
+  <section id="detail"><div class="empty">Select a run.</div></section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const short = (h, n = 10) => h ? h.slice(0, n + 2) + '…' + h.slice(-4) : '--';
+
+let current = null, bundle = null, listSignature = null;
+
+async function get(u){ const r = await fetch(u); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function post(u, body){
+  const r = await fetch(u, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)});
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/* ------------------------------------------------------------- run list */
+async function loadRuns(force){
+  try{
+    const {runs, chain} = await get('/api/runs');
+    $('#chain').innerHTML = chain.connected
+      ? `<span class="dot"></span>chain ${chain.chain_id} &middot; block ${chain.block}`
+      : '<span class="dot off"></span>chain offline';
+
+    if(!runs.length){
+      $('#runs').innerHTML = '<div class="empty">No bundles yet.<br><br>'
+        + '<span class="dim">Run the pipeline first.</span></div>';
+      listSignature = null; return;
+    }
+    const sig = runs.map(r => r.id).join(',');
+    if(sig === listSignature && !force) return;
+    const keep = current; listSignature = sig;
+
+    $('#runs').innerHTML = runs.map((r, i) => `
+      <div class="run rise" data-id="${esc(r.id)}" style="animation-delay:${i*35}ms">
+        <b>${esc(r.id.slice(0,12))}</b>
+        <span>${esc(r.created_at)}</span>
+        <span>${r.matched ? `${r.candidates} candidates`
+          : '<span class="warn">no match</span>'}</span>
+      </div>`).join('');
+    document.querySelectorAll('.run').forEach(el => el.onclick = () => show(el.dataset.id));
+
+    const keptExists = keep && runs.some(r => r.id === keep);
+    if(keptExists){
+      document.querySelectorAll('.run').forEach(el =>
+        el.classList.toggle('on', el.dataset.id === keep));
+      current = keep;
+    } else { show(runs[0].id); }
+  }catch(e){ $('#runs').innerHTML = `<div class="empty bad">${esc(e.message)}</div>`; }
+}
+
+/* --------------------------------------------------------------- detail */
+async function show(id){
+  current = id;
+  document.querySelectorAll('.run').forEach(el =>
+    el.classList.toggle('on', el.dataset.id === id));
+  $('#detail').innerHTML = '<div class="empty">loading&hellip;</div>';
+  try{
+    bundle = await get('/api/run/' + encodeURIComponent(id));
+    render(bundle);
+    chainState(id);
+  }catch(e){ $('#detail').innerHTML = `<div class="empty bad">${esc(e.message)}</div>`; }
+}
+
+function render(b){
+  const q = b.query, d = b.decision, m = b.merkle, a = b.attestation || {};
+  const replayed = b.search.provider === 'replay';
+
+  const rows = b.candidates.map((c,i) => `
+    <tr class="${c.accepted?'':'rejected'}" style="animation-delay:${i*30}ms">
+      <td class="dim">${i}</td>
+      <td style="min-width:96px">
+        ${c.similarity==null ? '<span class="dim">--</span>' : `
+          <b class="${c.accepted?'ok':'bad'}">${c.similarity.toFixed(4)}</b>
+          <div class="bar"><i data-w="${Math.max(0,Math.min(1,c.similarity))*100}"
+            class="${c.accepted?'':'no'}"></i></div>`}
+      </td>
+      <td>${c.accepted?'<span class="pill ok">accepted</span>'
+                      :`<span class="pill">${esc(c.status)}</span>`}</td>
+      <td>${c.social?'<span class="pill v">social</span>':''}</td>
+      <td class="url"><a href="${esc(c.page_url)}" target="_blank"
+        rel="noopener noreferrer">${esc(c.page_url)}</a></td>
+    </tr>`).join('');
+
+  $('#detail').innerHTML = `
+    <div class="pipe">
+      <div class="stage done rise" style="animation-delay:0ms">
+        <div class="n">STAGE 01</div><div class="t">FACE</div>
+        <div class="v">confidence ${q.detect_score} &middot; ${q.detect_scale}px</div>
+      </div>
+      <div class="link"></div>
+      <div class="stage done s2 rise" style="animation-delay:90ms">
+        <div class="n">STAGE 02</div><div class="t">SEARCH</div>
+        <div class="v">${b.search.candidates_returned} candidates &middot;
+          ${esc(b.search.provider)}${replayed?' <span class="pill warn">replay</span>':''}</div>
+      </div>
+      <div class="link"></div>
+      <div class="stage done s3 rise" style="animation-delay:180ms">
+        <div class="n">STAGE 03</div><div class="t">CHAIN</div>
+        <div class="v" id="stage3">${a.written?'attested':'not written'}</div>
+      </div>
+    </div>
+
+    <div class="card rise" style="animation-delay:220ms">
+      <h2>Query face</h2>
+      <div class="kv">
+        <div>source</div><div>${esc(q.source_name)}</div>
+        <div>bbox</div><div>${q.bbox.join(', ')}</div>
+        <div>faces in frame</div><div>${q.faces_found}</div>
+        <div>image sha256</div><div class="mono dim">${esc(q.image_sha256)}</div>
+        <div>embedding</div><div class="mono dim">${esc(q.embedding_sha256)}</div>
+      </div>
+    </div>
+
+    <div class="card rise" style="animation-delay:260ms" id="consentCard">
+      <h2>Consent <span id="consentPill"></span></h2>
+      <div id="consentBody" class="dim">checking the chain&hellip;</div>
+    </div>
+
+    <div class="card rise" style="animation-delay:300ms">
+      <h2>Candidates &mdash; threshold ${b.threshold}</h2>
+      <table><thead><tr><th></th><th>similarity</th><th>result</th><th></th>
+        <th>source page</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="dim" style="font-size:11.5px;margin:12px 0 0">
+        Dimmed rows were returned by the search and rejected here, after re-downloading
+        the image and re-embedding it. A search hit is not a face match.</p>
+    </div>
+
+    <div class="card rise" style="animation-delay:340ms">
+      <h2>Commitment</h2>
+      <div class="kv">
+        <div>merkle root</div><div class="hash mono" id="rootOut">${esc(m.root)}</div>
+        <div>leaves</div><div>${m.leaf_count}</div>
+        <div>best match</div><div class="url">${d.best_page_url
+          ? `<a href="${esc(d.best_page_url)}" target="_blank" rel="noopener noreferrer">${esc(d.best_page_url)}</a> <b class="ok">${d.best_similarity}</b>`
+          : '<span class="dim">no match</span>'}</div>
+        <div>network</div><div>${esc(a.network||'--')}</div>
+        <div>contract</div><div class="mono dim">${esc(a.contract||'--')}</div>
+        <div>transaction</div><div class="mono dim">${esc(a.tx_hash||'--')}</div>
+      </div>
+    </div>
+
+    <div class="card rise" style="animation-delay:380ms">
+      <h2>Verification</h2>
+      <button class="primary" id="vbtn" onclick="runVerify()">Verify against the chain</button>
+      <div class="steps" id="steps"></div>
+      <div id="verdict"></div>
+    </div>
+
+    <div class="card rise" style="animation-delay:420ms">
+      <h2>Tamper simulator</h2>
+      <p class="dim" style="font-size:12px;margin:0">
+        Edit a value and watch the root move away from the one on chain. Nothing is
+        written &mdash; the bundle on disk is untouched.</p>
+      <div class="sim">
+        <label>candidate[0] &mdash; source page</label>
+        <input id="simUrl" value="${esc(b.candidates[0]?.page_url||'')}">
+        <label>candidate[0] &mdash; similarity</label>
+        <input id="simSim" value="${b.candidates[0]?.similarity ?? ''}">
+        <div class="simout" id="simOut"><span class="dim">unchanged</span></div>
+      </div>
+    </div>`;
+
+  requestAnimationFrame(() => document.querySelectorAll('.bar i')
+    .forEach(el => el.style.width = el.dataset.w + '%'));
+  $('#simUrl').oninput = simulate;
+  $('#simSim').oninput = simulate;
+}
+
+/* ---------------------------------------------------- consent + chain state */
+async function chainState(id){
+  try{
+    const s = await get('/api/chainstate/' + encodeURIComponent(id));
+    const pill = $('#consentPill'), body = $('#consentBody');
+    if(!pill) return;
+
+    if(!s.written){ pill.innerHTML = '<span class="pill">not on chain</span>';
+      body.innerHTML = '<span class="dim">This bundle was never attested.</span>'; return; }
+    if(!s.exists){ pill.innerHTML = '<span class="pill bad">root absent</span>';
+      body.innerHTML = '<span class="bad">The chain has no record of this root.</span>'; return; }
+
+    if(s.revoked){
+      pill.innerHTML = '<span class="pill bad">REVOKED</span>';
+      $('#stage3').innerHTML = '<span class="bad">revoked</span>';
+    } else if(s.has_consent){
+      pill.innerHTML = '<span class="pill ok">consent recorded</span>';
+    } else {
+      pill.innerHTML = '<span class="pill warn">no consent</span>';
+    }
+
+    const c = bundle.consent;
+    body.innerHTML = `
+      <div class="kv">
+        ${c ? `<div>subject</div><div>${esc(c.subject)}</div>
+        <div>signer</div><div class="mono">${esc(c.signer_address)}</div>
+        <div>signed at</div><div>${esc(c.signed_at)}</div>
+        <div>covers image</div><div>${c.image_sha256===bundle.query.image_sha256
+          ? '<span class="ok">this exact image</span>'
+          : '<span class="bad">A DIFFERENT IMAGE</span>'}</div>`
+        : '<div>record</div><div class="dim">none in this bundle</div>'}
+        <div>on chain</div><div>${s.has_consent
+          ? '<span class="ok">consent hash stored</span>'
+          : '<span class="warn">no consent hash</span>'}</div>
+        <div>status</div><div>${s.revoked
+          ? `<span class="bad">withdrawn at ${s.revoked_at}</span>`
+          : '<span class="ok">live</span>'}</div>
+      </div>
+      ${s.revoked ? `<p class="dim" style="font-size:11.5px;margin:10px 0 0">
+        Chain history cannot be erased, so the record stands alongside its withdrawal.
+        Consumers should ask <code>isLive()</code>, not <code>exists()</code>.</p>`:''}
+      ${!s.has_consent && !s.revoked ? `<p class="dim" style="font-size:11.5px;margin:10px 0 0">
+        The scan may still have been authorised &mdash; the chain simply does not say so.
+        That is a weaker claim than a recorded consent.</p>`:''}`;
+  }catch(e){ /* the card keeps its placeholder */ }
+}
+
+/* --------------------------------------------------------- verification */
+const STEPS = [
+  ['fields',  'Re-hash every field'],
+  ['root',    'Rebuild the Merkle root'],
+  ['chain',   'Look the root up on chain'],
+  ['live',    'Check it has not been revoked'],
+];
+
+async function runVerify(){
+  const btn = $('#vbtn'); btn.disabled = true;
+  $('#verdict').innerHTML = '';
+  $('#steps').innerHTML = STEPS.map(([k,t]) =>
+    `<div class="step" id="st-${k}"><span class="ic"></span><span>${t}</span>
+     <span class="detail" id="sd-${k}"></span></div>`).join('');
+
+  try{
+    const v = await get('/api/verify/' + encodeURIComponent(current));
+    const s = await get('/api/chainstate/' + encodeURIComponent(current));
+
+    const outcomes = {
+      fields: [v.diverged.length === 0,
+               v.diverged.length ? v.diverged.join(', ') : `all ${v.leaf_count} match`],
+      root:   [v.root_ok, short(v.recomputed, 12)],
+      chain:  [v.on_chain, v.on_chain ? 'found' : 'not found'],
+      live:   [s.revoked !== true, s.revoked ? 'revoked' : 'live'],
+    };
+
+    // Stepped rather than instant: the point is that verification is a sequence of
+    // separate checks, and any one of them failing is a different kind of problem.
+    for(const [k] of STEPS){
+      const el = $('#st-'+k); el.classList.add('live');
+      await sleep(420);
+      const [pass, detail] = outcomes[k];
+      el.classList.remove('live');
+      el.classList.add('done', pass ? 'pass' : 'fail');
+      el.querySelector('.ic').textContent = pass ? '✓' : '✕';
+      $('#sd-'+k).textContent = detail;
+      $('#sd-'+k).className = 'detail ' + (pass ? 'ok' : 'bad');
+    }
+
+    const tampered = v.diverged.length || !v.root_ok || !v.on_chain;
+    const el = document.createElement('div');
+    el.className = 'verdict pop ' + (tampered ? 'bad' : s.revoked ? 'warn' : 'ok');
+    el.textContent = tampered ? 'TAMPERED' : s.revoked ? 'NOT RELIABLE' : 'VERIFIED';
+    $('#verdict').appendChild(el);
+    if(tampered) el.classList.add('shake');
+
+    const note = document.createElement('p');
+    note.className = 'dim'; note.style.cssText = 'font-size:12px;margin:8px 0 0';
+    note.textContent = tampered
+      ? 'The evidence no longer matches what was committed.'
+      : s.revoked
+        ? 'The evidence is intact, but the submitter withdrew this attestation.'
+        : 'Every field hashes to its committed leaf, those leaves rebuild the committed root, and that root is the one recorded on chain.';
+    $('#verdict').appendChild(note);
+  }catch(e){
+    $('#verdict').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  }finally{ btn.disabled = false; }
+}
+
+/* ------------------------------------------------------------ simulator */
+let simTimer = null;
+function simulate(){
+  clearTimeout(simTimer);
+  simTimer = setTimeout(async () => {
+    const url = $('#simUrl').value, sim = $('#simSim').value;
+    const edited = JSON.parse(JSON.stringify(bundle));
+    if(edited.candidates[0]){
+      edited.candidates[0].page_url = url;
+      const n = parseFloat(sim);
+      edited.candidates[0].similarity = Number.isNaN(n) ? null : n;
+    }
+    try{
+      const r = await post('/api/simulate', edited);
+      const out = $('#simOut'), rootEl = $('#rootOut');
+      if(r.root_ok){
+        out.innerHTML = '<span class="dim">unchanged &mdash; matches the commitment</span>';
+        rootEl.className = 'hash mono';
+        rootEl.textContent = r.committed;
+      }else{
+        out.innerHTML = `<div><span class="pill bad">root diverged</span>
+            <span class="dim" style="margin-left:8px">${esc(r.diverged.join(', '))}</span></div>
+          <div class="mono bad" style="margin-top:7px">${esc(r.recomputed)}</div>
+          <div class="dim" style="font-size:11.5px;margin-top:6px">
+            ${r.on_chain ? 'still on chain' : 'this root is not on chain &mdash; verification would fail'}
+          </div>`;
+        rootEl.className = 'hash mono bad';
+        rootEl.textContent = r.recomputed;
+        rootEl.classList.remove('pop'); void rootEl.offsetWidth; rootEl.classList.add('pop');
+      }
+    }catch(e){ $('#simOut').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  }, 260);
+}
+
+loadRuns();
+</script></body></html>

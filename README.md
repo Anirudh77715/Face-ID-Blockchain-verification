@@ -90,7 +90,45 @@ The raw search response is persisted and hashed into the commitment. That hash i
 makes "this was a genuine search, not a hardcoded result" checkable by someone who did not
 watch it run.
 
-### 3. Chain — a Merkle root, not a blob
+### 3. Chain — consent, a Merkle root, and the ability to withdraw
+
+Thinking about this as a product rather than a pipeline surfaces two things a face-matching
+registry cannot honestly ship without.
+
+**Consent.** A system that takes a face and finds where that person appears online is only
+defensible if they agreed. Saying so in a README is not a mechanism. The subject signs a
+statement naming the exact image by SHA-256 — so consent for one photo cannot authorise a
+scan of another — and the hash of that signed record is committed on chain beside the
+evidence root, and as a Merkle leaf. The document, the name and the signature stay local;
+only a hash is public.
+
+```bash
+py consent.py --image me.jpg --subject "Your Name"
+py run.py --image me.jpg --consent consent.json --chain local
+```
+
+The pipeline **refuses** a consent that does not cover the image it is scanning. A
+mismatched consent is worse than none, because it looks like authorisation. An attestation
+without consent is still permitted — the contract stores zero — but verification reports it
+differently, because "we do not know if they agreed" is not the claim "they agreed".
+
+**Revocation.** A match can be wrong, or a subject can withdraw. Chain history cannot be
+erased, so the attestation is marked withdrawn instead:
+
+```bash
+py revoke.py --bundle evidence/run-<id>.json --reason "false positive"
+```
+
+`isLive()` goes false, `exists()` stays true, and `verify.py` reports **NOT RELIABLE**
+(exit 8) rather than VERIFIED — a distinct outcome from TAMPERED, because intact evidence
+that has been withdrawn is a different situation from evidence that was altered. Only the
+original submitter may revoke; a registry where anyone can withdraw anyone's record is
+worse than one with no revocation at all.
+
+Public chains wait **3 confirmations**, because a just-mined block can reorg out and leave
+a bundle citing a transaction that never happened.
+
+### The commitment — a Merkle root, not a blob
 
 Committed on chain: a Merkle root over the run's evidence, the candidate count, and a
 matched flag. **Not committed: images, URLs, embeddings, or any identifier of the person
@@ -156,6 +194,7 @@ evidence the threshold is not obviously wrong — not as a benchmark result. Rep
 | 4 | No face in the input image |
 | 6 | `verify.py`: the evidence no longer matches what was committed |
 | 7 | `verify.py`: the root is not on chain at all |
+| 8 | `verify.py`: **NOT RELIABLE** — evidence intact, but revoked or consent does not hold |
 
 Exit 2 matters. A run that finds nothing leaves no attestation behind — the record is for
 matches, not for attempts.
@@ -209,11 +248,20 @@ offline reports `0/12 hits` and exits 2 rather than pretending.
 py viewer.py        # http://127.0.0.1:8000
 ```
 
-A local, read-only page listing evidence bundles: the query face, which backend resolved
-the search, every candidate with its similarity score, the commitment, and a button that
-verifies against the chain. Rejected candidates stay visible and dimmed, because "the
-search returned this and the pipeline declined it" is the distinction the whole build rests
-on, and it reads better as a table than as terminal output.
+A local, read-only page over the evidence bundles. Three things it does that terminal
+output cannot:
+
+- **The pipeline as three stages**, so the shape of the thing is visible at a glance, with
+  the chain stage turning red when an attestation has been withdrawn.
+- **Verification as a sequence.** Each check ticks in turn — re-hash fields, rebuild the
+  root, look it up on chain, confirm it is not revoked — because any one of them failing is
+  a different kind of problem, and a single green tick hides that.
+- **A tamper simulator.** Edit a candidate's URL or score in the page and watch the root
+  move away from the one on chain, live. Nothing is written: the endpoint recomputes and
+  returns, and the bundle on disk is untouched.
+
+Rejected candidates stay visible and dimmed, because "the search returned this and the
+pipeline declined it" is the distinction the whole build rests on.
 
 Not part of the pipeline, and the task requires no website. Two constraints it holds to:
 it never writes a bundle, sends a transaction, or runs a search; and verification calls
@@ -321,8 +369,12 @@ pom/chain.py            web3: deploy, record, read back, verify inclusion
 contracts/AttestationRegistry.sol
 scripts/calibrate.py    threshold measurement
 scripts/fetch_models.py ONNX weights, SHA-256 verified
+consent.py              create a signed consent record
+revoke.py               withdraw an attestation
 preflight.py            setup and recording sanity checks
 viewer.py               optional local read-only evidence viewer
+viewer_page.html        its interface
+pom/consent.py          consent signing and verification
 tests/                  171 tests, tiered by what they require
 spike/FINDINGS.md       day-1 search viability study
 ```
