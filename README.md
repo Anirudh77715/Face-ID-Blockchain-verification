@@ -369,6 +369,13 @@ the subject posted — so the match is near-duplicate — and switching would me
 weights and re-deriving the threshold. If this were a product rather than a submission,
 that is the first upgrade.
 
+**Restarting the local chain invalidates existing bundles.** Hardhat wipes state on
+restart, and because it deploys deterministically a redeploy lands at the *same* address -
+so a bundle written before the restart points at a live contract that simply has no
+records. `verify.py` distinguishes this from tampering by checking whether the contract
+holds any attestations at all, and says so rather than reporting altered evidence. Re-run
+the pipeline after restarting the node.
+
 **The calibration set is small.** 12 images, 8 people, positives from a single identity.
 Enough to show the threshold sits in a gap; not enough to quote a false-positive rate at
 any precision.

@@ -104,3 +104,67 @@ def test_runtime_printed_strings_are_ascii():
                     offenders.append(f"{path.name}:{node.lineno} {sorted(bad)}")
 
     assert not offenders, "non-ASCII in runtime strings:\n  " + "\n  ".join(offenders)
+
+
+# ------------------------------------------------- reset chain vs real tampering
+
+@pytest.mark.needs_chain
+class TestRootNotOnChain:
+    """Hardhat deploys deterministically, so restarting the node and redeploying puts a
+    fresh, empty contract at the same address. A stale bundle then points at a live
+    contract with no records - which must not be reported as altered evidence.
+    """
+
+    @pytest.fixture(scope="class")
+    def bundle(self, tmp_path_factory):
+        subprocess.run([sys.executable, "deploy.py", "--chain", "local"],
+                       cwd=ROOT, capture_output=True, text=True, timeout=300)
+        made = cli("run.py", "--image", "spike/control_small.jpg",
+                   "--chain", "local", "--offline", timeout=900)
+        if made.returncode != 0:
+            pytest.skip(f"pipeline unavailable: {made.stderr[-200:]}")
+        found = sorted((ROOT / "evidence").glob("run-*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        if not found:
+            pytest.skip("no bundle produced")
+        return found[0]
+
+    def test_the_bundle_verifies_first(self, bundle):
+        assert cli("verify.py", "--bundle", str(bundle),
+                   "--chain", "local").returncode == 0
+
+    def test_an_empty_contract_reads_as_a_reset_chain(self, bundle, tmp_path):
+        import json
+
+        from pom.chain import Chain
+
+        fresh = Chain("local").deploy().address
+        original = bundle.read_text(encoding="utf-8")
+        try:
+            data = json.loads(original)
+            data["attestation"]["contract"] = fresh
+            bundle.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            out = cli("verify.py", "--bundle", str(bundle), "--chain", "local")
+            assert out.returncode == 7
+            assert "no attestations at all" in out.stdout
+            assert "reset chain" in out.stdout
+        finally:
+            bundle.write_text(original, encoding="utf-8")
+
+    def test_a_populated_contract_still_reads_as_tampering(self, bundle):
+        import json
+
+        original = bundle.read_text(encoding="utf-8")
+        try:
+            data = json.loads(original)
+            data["candidates"][0]["page_url"] = "https://tampered.example/"
+            bundle.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            out = cli("verify.py", "--bundle", str(bundle), "--chain", "local")
+            assert out.returncode == 6
+            assert "does not correspond to any recorded run" in out.stdout
+            assert "reset chain" not in out.stdout, (
+                "real tampering must not be excused as a chain reset")
+        finally:
+            bundle.write_text(original, encoding="utf-8")

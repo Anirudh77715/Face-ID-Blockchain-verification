@@ -99,7 +99,28 @@ def main() -> int:
             print(f"  {RED}the recomputed root is NOT on chain{OFF}")
             print(f"  contract  {address}")
             print(f"  expected  {attestation.get('tx_hash')}")
-            print(f"\n  {RED}The evidence does not correspond to any recorded run.{OFF}")
+
+            # Distinguish "this evidence was altered" from "the chain was reset". Hardhat
+            # deploys deterministically, so restarting the node and redeploying puts a
+            # fresh, empty contract at the SAME address - and a stale bundle then points
+            # at a live contract that simply has no records. Without this, a reset dev
+            # chain is indistinguishable from tampering, which is a bad thing to hit
+            # mid-recording.
+            try:
+                total = chain.contract(address).functions.count().call()
+            except Exception:
+                total = None
+
+            if total == 0:
+                print(f"\n  {YELLOW}This contract holds no attestations at all.{OFF}")
+                print("  That points at a reset chain rather than altered evidence:")
+                print("  restarting `npx hardhat node` wipes state, and a redeploy lands")
+                print("  at the same deterministic address. Re-run the pipeline to")
+                print("  produce a bundle against the current chain.")
+            else:
+                print(f"\n  {RED}The evidence does not correspond to any recorded run.{OFF}")
+                if total is not None:
+                    print(f"  (the contract does hold {total} other attestation(s))")
             return 6 if diverged or not root_ok else 7
 
         record = chain.get(root_bytes, address=address)
