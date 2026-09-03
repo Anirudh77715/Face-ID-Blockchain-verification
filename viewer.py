@@ -216,6 +216,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "no such run"}, 404)
                 self._json(json.loads(found.read_text(encoding="utf-8")))
 
+            elif path.startswith("/api/face/"):
+                found = bundle_by_id(path.rsplit("/", 1)[-1])
+                if not found:
+                    return self._json({"error": "no such run"}, 404)
+                name = json.loads(found.read_text(encoding="utf-8")).get("face_render")
+                # Resolved by name inside EVIDENCE, never by a client-supplied path.
+                image = (EVIDENCE / Path(name).name) if name else None
+                if not image or not image.exists():
+                    return self._json({"error": "no render"}, 404)
+                self._send(200, image.read_bytes(), "image/png")
+
             elif path.startswith("/api/chainstate/"):
                 found = bundle_by_id(path.rsplit("/", 1)[-1])
                 if not found:

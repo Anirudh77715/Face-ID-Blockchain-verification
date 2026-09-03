@@ -45,6 +45,12 @@ Detection and a 128-d embedding, both shipping inside `opencv-python` as ONNX. C
 dlib/`face_recognition` and insightface because those need a compiler toolchain on Windows
 and this needs none.
 
+The run also writes an annotated copy showing the detected box, which the viewer displays.
+A pipeline reporting `bbox (383, 266, 326, 479)` has proved detection to itself; drawing the
+box proves it to whoever is watching, and makes a mis-detection obvious rather than a
+plausible-looking number. It is a rendering, not evidence - the image it renders is already
+bound by `query.image_sha256`, so it adds no leaf.
+
 YuNet **returns zero faces on large images, silently, at any confidence threshold**. A
 4753×3840 portrait detected nothing at 0.9, 0.6 or 0.3; the same image at 640px detected a
 face at 0.924. Detection therefore walks a scale ladder (1024 → 800 → 640 → 480) rather

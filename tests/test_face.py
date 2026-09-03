@@ -141,3 +141,45 @@ def test_jpeg_recompression_does_not_destroy_identity(encoder, control_bytes):
 def test_missing_models_fail_loudly(tmp_path):
     with pytest.raises(FileNotFoundError, match="fetch_models"):
         FaceEncoder(models=tmp_path)
+
+
+# ------------------------------------------------------------------- annotation
+
+def test_annotate_returns_a_png(encoder, control_bytes):
+    png = encoder.annotate(control_bytes, encoder.scan(control_bytes))
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_annotate_does_not_modify_the_source(encoder, control_bytes):
+    before = sha256_bytes(control_bytes)
+    encoder.annotate(control_bytes, encoder.scan(control_bytes))
+    assert sha256_bytes(control_bytes) == before
+
+
+def test_annotated_image_is_decodable_and_bounded(encoder, control_bytes):
+    png = encoder.annotate(control_bytes, encoder.scan(control_bytes), max_width=320)
+    img = imread_bytes(png)
+    assert img.shape[1] <= 320
+
+
+def test_a_small_image_is_not_upscaled(encoder, control_bytes):
+    src = imread_bytes(control_bytes)
+    png = encoder.annotate(control_bytes, encoder.scan(control_bytes), max_width=9999)
+    assert imread_bytes(png).shape[1] == src.shape[1]
+
+
+def test_annotation_marks_the_detected_region(encoder, control_bytes):
+    """The box should land on the face, not in a corner - a regression here would mean
+    bbox coordinates drifted out of source space again."""
+    import numpy as np
+    scan = encoder.scan(control_bytes)
+    src = imread_bytes(control_bytes)
+    out = imread_bytes(encoder.annotate(control_bytes, scan, max_width=9999))
+    x, y, w, h = scan.bbox
+
+    changed = np.any(src != out, axis=2)
+    assert changed.any(), "annotation drew nothing"
+    ys, xs = np.nonzero(changed)
+    # Every altered pixel sits within the bbox plus a margin for the label above it.
+    assert xs.min() >= x - 5 and xs.max() <= x + w + 5
+    assert ys.min() >= max(0, y - 40) and ys.max() <= y + h + 5

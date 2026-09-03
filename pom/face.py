@@ -151,6 +151,44 @@ class FaceEncoder:
 
     # ------------------------------------------------------------- comparison
 
+    def annotate(self, data: bytes, scan: FaceScan, max_width: int = 640) -> bytes:
+        """Draw the detected box on a copy of the image and return it as PNG bytes.
+
+        A pipeline that reports `bbox (383, 266, 326, 479)` has proved detection to
+        itself. Showing the box proves it to whoever is watching, and makes a
+        mis-detection obvious instead of a plausible-looking number.
+
+        Returns a copy - the source image is never modified.
+        """
+        img = imread_bytes(data)
+        x, y, w, h = scan.bbox
+
+        colour = (127, 208, 53)  # BGR: the same green the interface uses for accepted
+        thickness = max(2, int(round(min(img.shape[:2]) / 300)))
+        cv2.rectangle(img, (x, y), (x + w, y + h), colour, thickness)
+
+        # A corner bracket reads as a detection overlay rather than a plain box.
+        arm = max(8, int(min(w, h) * 0.18))
+        for cx, cy, dx, dy in ((x, y, 1, 1), (x + w, y, -1, 1),
+                               (x, y + h, 1, -1), (x + w, y + h, -1, -1)):
+            cv2.line(img, (cx, cy), (cx + dx * arm, cy), colour, thickness * 2)
+            cv2.line(img, (cx, cy), (cx, cy + dy * arm), colour, thickness * 2)
+
+        label = f"{scan.score:.3f}"
+        scale = max(0.45, min(w, h) / 320)
+        cv2.putText(img, label, (x, max(18, y - 9)), cv2.FONT_HERSHEY_SIMPLEX,
+                    scale, colour, max(1, thickness - 1), cv2.LINE_AA)
+
+        if img.shape[1] > max_width:
+            k = max_width / img.shape[1]
+            img = cv2.resize(img, (max_width, int(round(img.shape[0] * k))),
+                             interpolation=cv2.INTER_AREA)
+
+        ok, buf = cv2.imencode(".png", img)
+        if not ok:
+            raise ValueError("could not encode the annotated image")
+        return buf.tobytes()
+
     def cosine(self, a: np.ndarray, b: np.ndarray) -> float:
         """Cosine similarity in SFace's space. Higher is more alike; >= 0.363 is
         OpenCV's published same-identity threshold."""

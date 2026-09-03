@@ -94,6 +94,19 @@ def main() -> int:
     print(f"  embedding   {scan.embedding.shape[-1]}-d  sha256 {scan.embedding_sha256[:32]}")
     print(f"  image       sha256 {scan.image_sha256[:32]}")
 
+    # A rendering of the detected box, for the viewer and the recording. Derived from
+    # the image, whose hash is already committed, so it adds no leaf. Written beside the
+    # bundle in evidence/, which is gitignored - it contains the subject's photo.
+    face_png = None
+    try:
+        evidence.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+        face_png = evidence.EVIDENCE_DIR / f"face-{args.image.stem}.png"
+        face_png.write_bytes(encoder.annotate(args.image.read_bytes(), scan))
+        print(f"  annotated   {face_png}")
+    except Exception as e:
+        face_png = None
+        print(f"  annotated   [33mskipped ({type(e).__name__})[0m")
+
     # ------------------------------------------------------------- 1b. consent
     consent_record, consent_hash = None, None
     if args.consent:
@@ -163,6 +176,10 @@ def main() -> int:
     bundle = evidence.finalize(evidence.build(
         scan, response, results, args.threshold, args.image.name,
         consent_record=consent_record))
+    if face_png:
+        # Outside the committed fields on purpose: it is a rendering, not evidence, and
+        # the image it renders is already bound by query.image_sha256.
+        bundle["face_render"] = face_png.name
     root_hex = bundle["merkle"]["root"]
     print(f"  leaves      {bundle['merkle']['leaf_count']}")
     print(f"  root        {root_hex}")

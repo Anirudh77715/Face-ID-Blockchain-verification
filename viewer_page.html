@@ -89,6 +89,9 @@ section{padding:20px 24px 60px;overflow:auto}
 .kv{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:12.5px}
 .kv>div:nth-child(odd){color:var(--dim)}
 .mono{overflow-wrap:anywhere;font-size:12px}
+.facewrap{display:flex;gap:18px;align-items:flex-start}
+.facepic{width:190px;border-radius:var(--r);border:1px solid var(--line);
+  display:block;animation:pop .5s var(--e) both}
 .hash{color:var(--violet);overflow-wrap:anywhere}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -149,6 +152,8 @@ a:hover{text-decoration:underline}
   aside{border-right:none;border-bottom:1px solid var(--line);max-height:170px}
   .pipe{grid-template-columns:1fr;gap:8px}
   .link{display:none}
+  .facewrap{flex-direction:column}
+  .facepic{width:100%;max-width:280px}
   .kv{grid-template-columns:1fr;gap:2px}
   .kv>div:nth-child(even){margin-bottom:8px}
   td.url{max-width:none}
@@ -279,12 +284,16 @@ function render(b){
 
     <div class="card rise" style="animation-delay:220ms">
       <h2>Query face</h2>
-      <div class="kv">
+      <div class="facewrap">
+        ${b.face_render ? `<img class="facepic" alt="detected face"
+          src="/api/face/${encodeURIComponent(b.run_id)}">` : ''}
+        <div class="kv" style="flex:1">
         <div>source</div><div>${esc(q.source_name)}</div>
         <div>bbox</div><div>${q.bbox.join(', ')}</div>
         <div>faces in frame</div><div>${q.faces_found}</div>
         <div>image sha256</div><div class="mono dim">${esc(q.image_sha256)}</div>
         <div>embedding</div><div class="mono dim">${esc(q.embedding_sha256)}</div>
+        </div>
       </div>
     </div>
 
