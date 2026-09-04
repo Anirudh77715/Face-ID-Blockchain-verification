@@ -47,11 +47,14 @@ needs a build step.
 dlib/`face_recognition` still needs CMake and MSVC on Windows. **insightface no longer
 does** — 1.0.1 ships a pure-Python wheel, and this repo's earlier claim that it needed a
 compiler was out of date; it was checked and corrected rather than left standing. The
-reason to stay on SFace is a different one: this task's input is a photo the subject
-actually posted, so matching is near-duplicate rather than cross-pose, and the measured
-separation margin is +0.51. A 512-d ArcFace model would help on hard cases — a different
-decade, a heavy angle — at the cost of ~300 MB of weights and a full re-calibration. That
-trade is documented under Known limitations rather than quietly taken.
+reason to stay on SFace is a different one: it is measurably good enough here. It matches a
+1904 portrait to a 1947 one across a 43-year gap and rejects seven other people, with a
++0.396 margin between the two groups (`scripts/crosscheck.py`), and a +0.51 separation over
+66 calibration pairs.
+
+A 512-d ArcFace model would extend that further — heavier pose, lower resolution, larger
+populations where near-misses accumulate — at the cost of ~300 MB of weights and a full
+re-calibration. That trade is recorded under Known limitations rather than quietly taken.
 
 The run also writes an annotated copy showing the detected box, which the viewer displays.
 A pipeline reporting `bbox (383, 266, 326, 479)` has proved detection to itself; drawing the
