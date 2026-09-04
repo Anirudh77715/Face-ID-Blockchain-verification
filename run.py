@@ -1,7 +1,12 @@
 """End-to-end: face scan -> genuine reverse image search -> on-chain attestation.
 
-    py run.py --image me.jpg                    # local chain, no wallet needed
-    py run.py --image me.jpg --chain sepolia    # one real public transaction
+The photo can be a local file or an image URL, and one URL can serve as both the image to
+scan and the public copy the search needs:
+
+    py run.py --image me.jpg --image-url https://...   # local file, hosted copy
+    py run.py --image https://...                      # one URL, used for both
+    py run.py --image-url https://...                  # same thing, shorter
+    py run.py --image me.jpg --chain sepolia           # one real public transaction
 
 Exit codes are meaningful, because "found nothing" is a real outcome and should not look
 like success:
@@ -25,6 +30,7 @@ from pom.chain import AlreadyAttested, Chain, ChainError
 from pom.face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound
 from pom.match import best, verify
 from pom.search import SearchBlocked, SearchUnavailable, get_backend
+from pom.source import SourceError, is_url, resolve
 
 
 def rule(title: str) -> None:
@@ -34,7 +40,10 @@ def rule(title: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--image", required=True, type=Path)
+    ap.add_argument("--image",
+                    help="the photo to scan: a local path OR an http(s) image URL. "
+                         "If a URL and --image-url is not given, the same URL is used "
+                         "for the search.")
     ap.add_argument("--chain", default="local", choices=("local", "sepolia"))
     ap.add_argument("--backend", default="auto",
                     choices=("auto", "bing_url", "yandex_url", "bing_scripted",
@@ -64,8 +73,20 @@ def main() -> int:
                          "is not live, and the evidence records that")
     args = ap.parse_args()
 
-    if not args.image.exists():
-        print(f"no such image: {args.image}", file=sys.stderr)
+    # Either flag can carry the photo. Given only --image-url, that URL is both the image
+    # to scan and the public copy the search backends need.
+    if not args.image and not args.image_url:
+        print("give --image (a path or an image URL), or --image-url", file=sys.stderr)
+        return 1
+    if not args.image:
+        args.image = args.image_url
+    if is_url(args.image) and not args.image_url:
+        args.image_url = args.image
+
+    try:
+        source = resolve(args.image)
+    except SourceError as e:
+        print(e, file=sys.stderr)
         return 1
 
     if args.offline:
@@ -85,10 +106,15 @@ def main() -> int:
     # ---------------------------------------------------------------- 1. face
     rule("1. FACE")
     try:
-        scan = encoder.scan_path(args.image)
+        scan = encoder.scan(source.data)
     except NoFaceFound as e:
         print(f"  no face detected: {e}", file=sys.stderr)
         return 4
+    except ValueError as e:
+        print(f"  {e}", file=sys.stderr)
+        return 4
+    print(f"  source      {source.location}" + (
+        "  (downloaded)" if source.origin == "url" else ""))
     print(f"  bbox        {scan.bbox}")
     print(f"  confidence  {scan.score:.4f}   (faces in frame: {scan.faces_found})")
     print(f"  detected at {scan.detect_scale}px wide")
@@ -101,8 +127,9 @@ def main() -> int:
     face_png = None
     try:
         evidence.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-        face_png = evidence.EVIDENCE_DIR / f"face-{args.image.stem}.png"
-        face_png.write_bytes(encoder.annotate(args.image.read_bytes(), scan))
+        stem = Path(source.name).stem or "image"
+        face_png = evidence.EVIDENCE_DIR / f"face-{stem}.png"
+        face_png.write_bytes(encoder.annotate(source.data, scan))
         print(f"  annotated   {face_png}")
     except Exception as e:
         face_png = None
@@ -142,7 +169,8 @@ def main() -> int:
         print("  [33mREPLAY - no live query; this is a development run[0m")
     print(f"  provider    {backend.name}")
     try:
-        response = backend.search(args.image, image_url=args.image_url)
+        response = backend.search(Path(source.location) if source.origin == "file"
+                                  else args.image, image_url=args.image_url)
     except SearchBlocked as e:
         print(f"\n  BLOCKED\n  {e}", file=sys.stderr)
         return 3
@@ -175,7 +203,7 @@ def main() -> int:
     # ------------------------------------------------------------ 4. evidence
     rule("4. EVIDENCE BUNDLE")
     bundle = evidence.finalize(evidence.build(
-        scan, response, results, args.threshold, args.image.name,
+        scan, response, results, args.threshold, source.name,
         consent_record=consent_record))
     if face_png:
         # Outside the committed fields on purpose: it is a rendering, not evidence, and

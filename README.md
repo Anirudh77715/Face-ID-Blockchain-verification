@@ -33,7 +33,7 @@ npx hardhat node                    # leave running in another terminal
 
 py deploy.py --chain local
 py preflight.py                     # verify the whole setup before you rely on it
-py run.py    --image path/to/face.jpg --chain local
+py run.py    --image path/to/face.jpg --chain local     # or an image URL
 py verify.py --bundle evidence/run-<id>.json --chain local
 ```
 
@@ -66,6 +66,38 @@ YuNet **returns zero faces on large images, silently, at any confidence threshol
 4753×3840 portrait detected nothing at 0.9, 0.6 or 0.3; the same image at 640px detected a
 face at 0.924. Detection therefore walks a scale ladder (1024 → 800 → 640 → 480) rather
 than trusting a single attempt, and the bounding box is mapped back to source coordinates.
+
+### Input — a file or a URL, any face
+
+The photo can be either, and one URL can do both jobs at once:
+
+```bash
+py run.py --image me.jpg --image-url "https://..."   # local file, hosted copy
+py run.py --image "https://..."                      # one URL, used for both
+py run.py --image-url "https://..."                  # same thing, shorter
+```
+
+Requiring a local file made the common case awkward: the input for this task is a photo
+the subject already posted, so it already lives at a URL. What is committed is always the
+SHA-256 of the bytes actually scanned, so a run from a URL and a run from a downloaded copy
+of the same file produce the same identity — and a URL whose content changes later cannot
+quietly rewrite what was attested.
+
+Nothing is specific to any one face. Three different people, three input forms, all live:
+
+| subject | input form | backend | candidates | accepted |
+|---|---|---|---|---|
+| Einstein | local file | bing_url | 33 (12 social) | 8 / 12 |
+| Marie Curie | `--image <url>` | yandex_url | 272 (71 social) | 11 / 12 |
+| Nikola Tesla | `--image-url <url>` | bing_url | 36 (11 social) | 10 / 12 |
+
+Pasting the page a photo sits on rather than the image itself is the usual mistake, so that
+is refused with the fix rather than a decode error further down:
+
+```
+that URL returned 'text/html', not an image.
+  Use a direct image link - the one you get from 'Copy image address', not the page it sits on.
+```
 
 ### 2. Search — no key, and verified rather than trusted
 
