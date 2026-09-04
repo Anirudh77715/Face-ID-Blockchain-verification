@@ -432,16 +432,24 @@ function render(b){
     </div>
 
     <div class="card rise" style="animation-delay:400ms">
-      <h2>Tamper simulator</h2>
-      <p class="dim" style="font-size:12.5px;margin:0">
-        Edit a value and watch the root move away from the one on chain. Nothing is
-        written &mdash; the bundle on disk is untouched.</p>
+      <h2>Tamper simulator <span class="pill warn">demonstration</span></h2>
+      <p class="dim" style="font-size:12.5px;margin:0 0 4px">
+        <b class="warn">These are not pipeline inputs.</b> They forge the already-recorded
+        evidence, the way an attacker editing the bundle on disk would &mdash; so any edit
+        <em>should</em> break verification. That is the property being shown.</p>
+      <p class="dim" style="font-size:12px;margin:0">
+        The commitment fingerprints the exact recorded bytes, not the subject. Swapping in
+        another photo of the same person still diverges: the root has no opinion about who
+        is in the picture. To scan a different image, run the pipeline
+        <code>py run.py --image &hellip; --image-url &hellip;</code>.
+        Nothing here is written &mdash; the bundle on disk is untouched.</p>
       <div class="sim">
-        <label>candidate[0] &mdash; source page</label>
+        <label>forge candidate[0] &mdash; source page</label>
         <input id="simUrl" value="${esc(b.candidates[0]?.page_url||'')}">
-        <label>candidate[0] &mdash; similarity</label>
+        <label>forge candidate[0] &mdash; similarity</label>
         <input id="simSim" value="${b.candidates[0]?.similarity ?? ''}">
         <div class="simout" id="simOut"><span class="dim">unchanged</span></div>
+        <button class="chip" style="margin-top:12px" onclick="resetSim()">Reset</button>
       </div>
     </div>`;
 
@@ -593,6 +601,12 @@ async function runVerify(){
 }
 
 /* --------------------------------------------------------------- simulator */
+function resetSim(){
+  $('#simUrl').value = bundle.candidates[0]?.page_url || '';
+  $('#simSim').value = bundle.candidates[0]?.similarity ?? '';
+  simulate();
+}
+
 let simTimer = null;
 function simulate(){
   clearTimeout(simTimer);
@@ -614,7 +628,8 @@ function simulate(){
           <div class="hash bad" style="margin-top:8px">${esc(r.recomputed)}</div>
           <div class="dim" style="font-size:11.5px;margin-top:7px">
             ${r.on_chain ? 'still on chain'
-              : 'this root is not on chain &mdash; verification would fail'}</div>`;
+              : 'not on chain &mdash; verification would reject this bundle, which is the '
+                + 'correct outcome for edited evidence'}</div>`;
       }
     }catch(e){ $('#simOut').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
   }, 260);

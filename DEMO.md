@@ -165,9 +165,15 @@ and `isLive()` returns false for anyone who asks the contract directly.
 py viewer.py        # http://127.0.0.1:8000
 ```
 
-Verification runs as four visible steps rather than one verdict, and the tamper simulator
-lets you edit a candidate in the page and watch the root move away from the one on chain,
-live. Nothing is written.
+Verification runs as four visible steps rather than one verdict. Click a Merkle leaf and
+its path to the root lights up, with the siblings a proof would supply alongside - the
+clearest way to show why disclosing one field reveals nothing else.
+
+The tamper simulator lets you edit a candidate in the page and watch the root move away
+from the one on chain, live. **Say out loud that those boxes forge the recorded evidence
+and are not pipeline inputs** - they look like inputs, and a viewer who thinks you are
+searching a new image will read a correct rejection as a broken pipeline. Nothing is
+written either way.
 
 ### 11 — Close
 
