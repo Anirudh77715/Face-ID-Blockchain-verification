@@ -289,9 +289,15 @@ output cannot:
 - **Verification as a sequence.** Each check ticks in turn — re-hash fields, rebuild the
   root, look it up on chain, confirm it is not revoked — because any one of them failing is
   a different kind of problem, and a single green tick hides that.
+- **The Merkle tree, drawn.** Click any leaf and its path to the root lights up, with the
+  siblings a proof would have to supply shown alongside. A root is an abstraction until you
+  can see the leaves it was built from and watch one prove itself — which is also the
+  clearest way to show why disclosing a single field reveals nothing else.
 - **A tamper simulator.** Edit a candidate's URL or score in the page and watch the root
   move away from the one on chain, live. Nothing is written: the endpoint recomputes and
   returns, and the bundle on disk is untouched.
+- **Filters and copyable hashes**, because a table of twelve candidates and a 66-character
+  root are things you actually want to slice and paste.
 
 Rejected candidates stay visible and dimmed, because "the search returned this and the
 pipeline declined it" is the distinction the whole build rests on.

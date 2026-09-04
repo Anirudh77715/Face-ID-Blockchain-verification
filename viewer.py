@@ -24,9 +24,9 @@ import traceback
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from pom import evidence
+from pom import evidence, merkle
 from pom.chain import Chain, ChainError
 
 ROOT = Path(__file__).resolve().parent
@@ -95,6 +95,45 @@ def chain_state_for(bundle: dict) -> dict:
     except ChainError as e:
         out["error"] = str(e)
     return out
+
+
+def merkle_tree(bundle: dict, focus: int | None = None) -> dict:
+    """The commitment as a tree, plus the sibling path for one leaf.
+
+    The interface draws this. A root is an abstraction until you can see the leaves it
+    was built from and watch a single one prove itself against it - which is also the
+    clearest way to show why selective disclosure works.
+    """
+    named = evidence.leaves(bundle)
+    hashes = [h for _, h in named]
+    levels = merkle.build(hashes)
+
+    path_nodes: set[tuple[int, int]] = set()
+    sibling_nodes: set[tuple[int, int]] = set()
+    if focus is not None and 0 <= focus < len(hashes):
+        index = focus
+        for depth, level in enumerate(levels[:-1]):
+            path_nodes.add((depth, index))
+            sibling = index + 1 if index % 2 == 0 else index - 1
+            if sibling < len(level):
+                sibling_nodes.add((depth, sibling))
+            index //= 2
+        path_nodes.add((len(levels) - 1, 0))
+
+    return {
+        "leaf_names": [n for n, _ in named],
+        "levels": [
+            [{"hash": "0x" + h.hex(),
+              "on_path": (d, i) in path_nodes,
+              "sibling": (d, i) in sibling_nodes}
+             for i, h in enumerate(level)]
+            for d, level in enumerate(levels)
+        ],
+        "root": "0x" + levels[-1][0].hex(),
+        "focus": focus,
+        "proof_length": len(merkle.proof(hashes, focus)) if focus is not None
+        and 0 <= focus < len(hashes) else 0,
+    }
 
 
 def verify_bundle(bundle: dict) -> dict:
@@ -226,6 +265,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not image or not image.exists():
                     return self._json({"error": "no render"}, 404)
                 self._send(200, image.read_bytes(), "image/png")
+
+            elif path.startswith("/api/tree/"):
+                query = parse_qs(urlparse(self.path).query)
+                found = bundle_by_id(path.rsplit("/", 1)[-1])
+                if not found:
+                    return self._json({"error": "no such run"}, 404)
+                focus = query.get("leaf", [None])[0]
+                self._json(merkle_tree(
+                    json.loads(found.read_text(encoding="utf-8")),
+                    int(focus) if focus is not None and focus.isdigit() else None))
 
             elif path.startswith("/api/chainstate/"):
                 found = bundle_by_id(path.rsplit("/", 1)[-1])
