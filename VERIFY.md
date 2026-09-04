@@ -47,6 +47,11 @@ box drawn on the face — detection proved visually, not just as a number.
 Threshold is measured, not assumed: `py scripts/calibrate.py` reports a **+0.5108**
 separation margin over 66 pairs.
 
+And it recognises the person rather than the file — `py scripts/crosscheck.py` matches a
+1904 portrait to a 1947 one (+0.6168, a 43-year gap) while rejecting seven other people,
+with a +0.3959 gap between the two groups. Worth running if anyone asks whether this is
+really face recognition or just duplicate-image detection.
+
 ## 2. A real matching social media post, via genuine reverse-image search
 
 Needs the network. `--image-url` is a public URL of the same photo.

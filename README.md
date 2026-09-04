@@ -215,6 +215,39 @@ This set is small and its positives all come from one identity, so treat the mar
 evidence the threshold is not obviously wrong — not as a benchmark result. Reproduce with
 `py scripts/calibrate.py`; raw pairs are in `bench/calibration.json`.
 
+## Is it recognising the person, or just the photo?
+
+A reverse image search finds near-duplicates. If the face stage only ever agreed with the
+search about near-duplicates, this would be an image-duplicate detector in a face
+recognition costume. So the question gets asked directly:
+
+```bash
+py scripts/crosscheck.py
+```
+
+```
+SAME PERSON, a different photograph
+  1904, age 25 (43-year gap)     +0.6168  MATCH
+  1921, age 42 (26-year gap)     +0.6471  MATCH
+  einstein-x0 .. x3              +0.80 to +0.96  MATCH
+
+DIFFERENT PEOPLE
+  bohr, curie, tesla, turing,
+  feynman, gandhi, hopper        +0.04 to +0.22  rejected
+
+worst same-person   +0.6168
+best different      +0.2210
+gap                 +0.3959      missed 0/6, false matches 0/7
+```
+
+A 1904 portrait and a 1947 portrait share almost no pixels; anything matching images rather
+than faces fails there. Identity survives the change of photograph, seven other people are
+rejected, and the 0.363 threshold sits inside a 0.396-wide gap between the two groups.
+
+This is also why `--image-url` matters. The search decides *which* photos get considered;
+the encoder decides whether they are the same face. Give it a URL of a photo you posted and
+it can find other pictures of you, not only reposts of that one file.
+
 ## Exit codes
 
 "Found nothing" is a real outcome and should not look like success.
@@ -373,6 +406,11 @@ property of the index, not evidence about the person.
 **Matching is near-duplicate-biased.** SFace compares faces, but candidates only exist if
 an engine surfaced the page, and engines favour visually similar *images*. Expect this to
 find reposts of a photo far more reliably than a different photo of the same person.
+
+**Cross-photo matching is verified, but on a small set.** `scripts/crosscheck.py` shows
+identity surviving a 43-year age gap with a 0.396 margin, over six same-person and seven
+different-person comparisons. That is enough to show the pipeline recognises faces rather
+than duplicate files; it is not a benchmark.
 
 **A larger face model would match harder cases.** SFace is 128-d and lightweight. An
 ArcFace model (insightface `buffalo_l`, 512-d) is measurably stronger when the two photos
