@@ -308,6 +308,11 @@ it never writes a bundle, sends a transaction, or runs a search; and verificatio
 itself while disagreeing with the tool that matters. Stdlib only, bound to localhost,
 because bundles name the pages a face was matched to.
 
+## Checking it against the task requirements
+
+[VERIFY.md](VERIFY.md) walks each of the six requirements to a command and the output it
+should produce, with real captured results rather than illustrative ones.
+
 ## Is it working?
 
 One command answers it. Needs `npx hardhat node` running.
