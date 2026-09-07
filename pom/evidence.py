@@ -93,6 +93,11 @@ def leaves(bundle: dict) -> list[tuple[str, bytes]]:
     ]
     if "consent" in bundle:
         items.append(("consent", bundle["consent"]))
+    # Present only when the run performed a Face ID lookup. Absent for every bundle
+    # written before the feature existed, so those still recompute to their original
+    # roots and keep verifying.
+    if "faceid" in bundle:
+        items.append(("faceid", bundle["faceid"]))
     for i, c in enumerate(bundle["candidates"]):
         items.append((f"candidate[{i}]", {
             "page_url": c["page_url"],
@@ -130,6 +135,77 @@ def save(bundle: dict, directory: Path = EVIDENCE_DIR) -> Path:
 
 def load(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _scan_bundles(directory: Path, exclude: Path | None):
+    exclude = Path(exclude).resolve() if exclude else None
+    for path in sorted(Path(directory).glob("run-*.json")):
+        if exclude and path.resolve() == exclude:
+            continue
+        try:
+            yield path, load(path)
+        except (OSError, json.JSONDecodeError):
+            continue  # a half-written or hand-edited bundle must not break a run
+
+
+def same_image_runs(image_sha256: str, directory: Path = EVIDENCE_DIR,
+                    exclude: Path | None = None) -> list[dict]:
+    """Earlier runs that scanned these exact image bytes, oldest first.
+
+    This is the one that fires on a genuine re-upload. Two live runs of the same photo
+    do *not* share a Merkle root - `search.queried_at` and `search.raw_sha256` are
+    leaves, so a second search at a second moment commits to something different. The
+    input image hash is what stays constant, and it is `query.image_sha256`.
+
+    Matched on bytes, so a photo re-submitted under a new filename is still recognised;
+    the name is reported as context because it is not committed to anything.
+    """
+    found = [
+        {
+            "path": path,
+            "source_name": b.get("query", {}).get("source_name"),
+            "created_at": b.get("created_at"),
+            "root": b.get("merkle", {}).get("root"),
+            "attested": bool(b.get("attestation", {}).get("written")),
+            "tx_hash": b.get("attestation", {}).get("tx_hash"),
+        }
+        for path, b in _scan_bundles(directory, exclude)
+        if b.get("query", {}).get("image_sha256") == image_sha256
+    ]
+    return sorted(found, key=lambda r: r["created_at"] or "")
+
+
+def prior_runs(root_hex: str, directory: Path = EVIDENCE_DIR,
+               exclude: Path | None = None) -> list[dict]:
+    """Bundles on disk that committed this same root, oldest first.
+
+    Used to answer "this photo has been attested before - under what name?". The
+    filename is deliberately *not* a Merkle leaf: what is committed is the SHA-256 of
+    the bytes scanned, so the same image re-uploaded as `holiday.jpg` and as `me.png`
+    produces an identical root. That makes the name useful context and never evidence,
+    and callers must present it that way.
+
+    Reads local bundles, not the chain. The chain holds no filenames - by design, since
+    a filename can carry a person's name and the ledger is public and permanent.
+    """
+    found = []
+    exclude = Path(exclude).resolve() if exclude else None
+    for path in sorted(Path(directory).glob("run-*.json")):
+        if exclude and path.resolve() == exclude:
+            continue
+        try:
+            other = load(path)
+        except (OSError, json.JSONDecodeError):
+            continue  # a half-written or hand-edited bundle must not break a run
+        if other.get("merkle", {}).get("root") != root_hex:
+            continue
+        found.append({
+            "path": path,
+            "source_name": other.get("query", {}).get("source_name"),
+            "created_at": other.get("created_at"),
+            "image_sha256": other.get("query", {}).get("image_sha256"),
+        })
+    return sorted(found, key=lambda r: r["created_at"] or "")
 
 
 def diff_against_stored(bundle: dict) -> list[str]:

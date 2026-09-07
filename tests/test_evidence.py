@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -143,3 +144,84 @@ def test_non_ascii_survives_the_commitment(bundle):
     assert evidence.root(finalized) == evidence.root(evidence.load(
         evidence.save(finalized, __import__("pathlib").Path(
             __import__("tempfile").mkdtemp()))))
+
+
+# ------------------------------------------------- recognising a re-submitted photo
+
+def _bundle_file(directory, name, image_sha, root, created, attested=False):
+    """A minimal bundle on disk, only the fields the lookups read."""
+    body = {
+        "created_at": created,
+        "query": {"source_name": name, "image_sha256": image_sha},
+        "merkle": {"root": root},
+        "attestation": {"written": attested},
+    }
+    path = directory / f"run-{Path(name).stem}-{root[2:10]}.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_same_image_runs_matches_on_bytes_not_filename(tmp_path):
+    """The point of the feature: a photo re-uploaded under a new name is still found."""
+    _bundle_file(tmp_path, "control_small.jpg", "aaa", "0x" + "1" * 64,
+                 "2026-01-01T00:00:00Z")
+    _bundle_file(tmp_path, "holiday-photo.jpg", "aaa", "0x" + "2" * 64,
+                 "2026-01-02T00:00:00Z")
+    _bundle_file(tmp_path, "someone-else.jpg", "bbb", "0x" + "3" * 64,
+                 "2026-01-03T00:00:00Z")
+
+    found = evidence.same_image_runs("aaa", directory=tmp_path)
+    assert [r["source_name"] for r in found] == ["control_small.jpg", "holiday-photo.jpg"]
+
+
+def test_same_image_runs_is_ordered_oldest_first(tmp_path):
+    _bundle_file(tmp_path, "b.jpg", "aaa", "0x" + "2" * 64, "2026-01-02T00:00:00Z")
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "1" * 64, "2026-01-01T00:00:00Z")
+    found = evidence.same_image_runs("aaa", directory=tmp_path)
+    assert [r["created_at"] for r in found] == [
+        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]
+
+
+def test_same_image_runs_can_exclude_the_bundle_being_checked(tmp_path):
+    mine = _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "1" * 64,
+                        "2026-01-01T00:00:00Z")
+    _bundle_file(tmp_path, "b.jpg", "aaa", "0x" + "2" * 64, "2026-01-02T00:00:00Z")
+    found = evidence.same_image_runs("aaa", directory=tmp_path, exclude=mine)
+    assert [r["source_name"] for r in found] == ["b.jpg"]
+
+
+def test_same_image_runs_reports_whether_each_was_attested(tmp_path):
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "1" * 64, "2026-01-01T00:00:00Z",
+                 attested=True)
+    _bundle_file(tmp_path, "b.jpg", "aaa", "0x" + "2" * 64, "2026-01-02T00:00:00Z")
+    found = evidence.same_image_runs("aaa", directory=tmp_path)
+    assert [r["attested"] for r in found] == [True, False]
+
+
+def test_a_live_rerun_of_the_same_photo_does_not_share_a_root(tmp_path):
+    """Pins the reason the lookup keys on the image hash rather than the root.
+
+    search.queried_at and search.raw_sha256 are leaves, so a second search commits to
+    something different even though the input image is identical.
+    """
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "1" * 64, "2026-01-01T00:00:00Z")
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "2" * 64, "2026-01-02T00:00:00Z")
+
+    assert len(evidence.same_image_runs("aaa", directory=tmp_path)) == 2
+    assert len(evidence.prior_runs("0x" + "1" * 64, directory=tmp_path)) == 1
+
+
+def test_prior_runs_finds_bundles_sharing_a_root(tmp_path):
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "9" * 64, "2026-01-01T00:00:00Z")
+    _bundle_file(tmp_path, "b.jpg", "aaa", "0x" + "9" * 64, "2026-01-02T00:00:00Z")
+    found = evidence.prior_runs("0x" + "9" * 64, directory=tmp_path)
+    assert [r["source_name"] for r in found] == ["a.jpg", "b.jpg"]
+
+
+def test_a_corrupt_bundle_does_not_break_the_lookup(tmp_path):
+    """A hand-edited bundle sitting in evidence/ must not take down an unrelated run."""
+    _bundle_file(tmp_path, "a.jpg", "aaa", "0x" + "1" * 64, "2026-01-01T00:00:00Z")
+    (tmp_path / "run-broken.json").write_text("{not json", encoding="utf-8")
+
+    found = evidence.same_image_runs("aaa", directory=tmp_path)
+    assert [r["source_name"] for r in found] == ["a.jpg"]

@@ -3,4 +3,9 @@ numpy>=2.0
 requests>=2.32
 playwright>=1.47
 web3>=7.0
+# Used directly by consent.py and pom/merkle.py. They arrive with web3 anyway,
+# but a direct import belongs in the manifest rather than relying on a transitive
+# dependency that a future web3 release could drop.
+eth-account>=0.13
+eth-utils>=5.0
 python-dotenv>=1.0

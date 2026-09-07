@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pom import consent as consent_module
 from pom import evidence
+from pom import faceid as faceid_module
 from pom import match as match_module
 from pom.chain import AlreadyAttested, Chain, ChainError
 from pom.face import COSINE_SAME_IDENTITY, FaceEncoder, NoFaceFound
@@ -67,6 +68,16 @@ def main() -> int:
     ap.add_argument("--contract", help="override the deployed address")
     ap.add_argument("--no-chain", action="store_true",
                     help="run the pipeline but skip the write")
+    ap.add_argument("--no-faceid", action="store_true",
+                    help="skip the persistent Face ID lookup entirely")
+    ap.add_argument("--faceid-high", type=float, metavar="X",
+                    help="similarity at or above which a face is treated as the same "
+                         f"Face ID (default {faceid_module.DEFAULT_HIGH_CONFIDENCE_THRESHOLD}, "
+                         "or POM_FACEID_HIGH)")
+    ap.add_argument("--faceid-review", type=float, metavar="X",
+                    help="similarity at or above which a face is flagged for review "
+                         f"(default {faceid_module.DEFAULT_REVIEW_THRESHOLD}, "
+                         "or POM_FACEID_REVIEW)")
     ap.add_argument("--offline", action="store_true",
                     help="no network at all: replay the saved search and use only cached "
                          "candidate images. For rehearsal and reproducibility - the search "
@@ -121,6 +132,21 @@ def main() -> int:
     print(f"  embedding   {scan.embedding.shape[-1]}-d  sha256 {scan.embedding_sha256[:32]}")
     print(f"  image       sha256 {scan.image_sha256[:32]}")
 
+    # Someone re-submitting a photo that has been scanned before is worth saying out
+    # loud, and the chain cannot answer it - it holds no filenames and no image hashes
+    # in the clear. The local bundles can.
+    seen_before = evidence.same_image_runs(scan.image_sha256)
+    if seen_before:
+        first = seen_before[0]
+        print(f"  seen before these exact bytes were scanned in "
+              f"{len(seen_before)} earlier run(s)")
+        print(f"              first as '{first['source_name']}' on {first['created_at']}")
+        names = {r["source_name"] for r in seen_before if r["source_name"]}
+        others = sorted(names - {first["source_name"]})
+        if others:
+            print(f"              also submitted as: {', '.join(others)}")
+        print("              (matched on image bytes; the filename is not committed)")
+
     # A rendering of the detected box, for the viewer and the recording. Derived from
     # the image, whose hash is already committed, so it adds no leaf. Written beside the
     # bundle in evidence/, which is gitignored - it contains the subject's photo.
@@ -159,6 +185,46 @@ def main() -> int:
     else:
         print("  consent     [33mnone recorded[0m "
               "(use --consent; see consent.py)")
+
+    # ------------------------------------------------------------ 1c. face id
+    # Deliberately after the consent gate: a scan refused for lack of consent must not
+    # leave a biometric record behind. A Face ID is an anonymous application label - it
+    # never carries a person's name and says nothing about who anyone is.
+    faceid_decision = None
+    registry = None
+    if not args.no_faceid:
+        rule("1c. PERSISTENT FACE ID")
+        try:
+            thresholds = faceid_module.Thresholds.from_env(
+                high=args.faceid_high, review=args.faceid_review)
+            registry = faceid_module.FaceRegistry(thresholds=thresholds)
+            faceid_decision = registry.observe(
+                scan.embedding, scan.image_sha256, encoder.cosine,
+                source_name=source.name)
+        except faceid_module.FaceIdError as e:
+            print(f"  face registry unavailable: {e}")
+            print("  The pipeline continues - Face ID is an added layer, not a "
+                  "dependency.")
+            registry = None
+        else:
+            d = faceid_decision
+            print(f"  face id     {d.face_id}")
+            print(f"  status      {d.headline}")
+            if d.similarity is not None:
+                print(f"  similarity  {d.similarity:.4f}   "
+                      f"(match >= {d.thresholds.high}, "
+                      f"review >= {d.thresholds.review})")
+            else:
+                print("  similarity  --      (the registry was empty)")
+            print(f"  photos      {d.photo_count} recorded for this face id")
+            if d.ranked[:3]:
+                print("  ranked      " + ", ".join(
+                    f"{fid} {score:.3f}" for fid, score in d.ranked[:3]))
+            if d.status == faceid_module.REVIEW:
+                print("  REVIEW REQUIRED - too close to call, so a new Face ID was")
+                print("  created rather than merging two identities on a guess.")
+            print("  note        an anonymous label for a face, not a claim about")
+            print("              who anyone is")
 
     # -------------------------------------------------------------- 2. search
     rule("2. REVERSE IMAGE SEARCH")
@@ -202,9 +268,15 @@ def main() -> int:
 
     # ------------------------------------------------------------ 4. evidence
     rule("4. EVIDENCE BUNDLE")
-    bundle = evidence.finalize(evidence.build(
+    built = evidence.build(
         scan, response, results, args.threshold, source.name,
-        consent_record=consent_record))
+        consent_record=consent_record)
+    if faceid_decision:
+        # Committed as a leaf, so which Face ID a run belonged to is as tamper-evident
+        # as the rest of the evidence. The embedding itself never goes on chain - only
+        # this, and query.embedding_sha256.
+        built["faceid"] = faceid_decision.as_dict()
+    bundle = evidence.finalize(built)
     if face_png:
         # Outside the committed fields on purpose: it is a rendering, not evidence, and
         # the image it renders is already bound by query.image_sha256.
@@ -246,6 +318,20 @@ def main() -> int:
         print(f"  root        {e.root_hex}")
         print(f"  recorded    {e.record['timestamp']} by {e.record['submitter']}")
 
+        # Someone has re-submitted a photo that was attested before. The chain cannot
+        # say which file it was - it holds no filenames - but the local bundles can.
+        earlier = evidence.prior_runs(root_hex, exclude=None)
+        if earlier:
+            first = earlier[0]
+            print(f"  first seen  {first['source_name']}")
+            print(f"              {first['path'].name}, {first['created_at']}")
+            names = {r["source_name"] for r in earlier if r["source_name"]}
+            if len(names) > 1:
+                print(f"              also submitted as: "
+                      f"{', '.join(sorted(names - {first['source_name']}))}")
+            print("              (the filename is not committed on chain - identical")
+            print("               bytes under any name produce this same root)")
+
         prior = chain.find_record_tx(root, address=args.contract) or {}
         bundle["attestation"] = {
             "written": True,
@@ -281,6 +367,13 @@ def main() -> int:
         "explorer_url": receipt.explorer_url,
     }
     path = evidence.save(bundle)
+
+    if registry and faceid_decision and faceid_decision.face_id:
+        registry.attach_attestation(
+            faceid_decision.face_id, scan.image_sha256,
+            {"network": receipt.network, "contract": receipt.address,
+             "tx_hash": receipt.tx_hash, "block": receipt.block,
+             "root": root_hex, "bundle": path.name})
 
     print(f"  contract    {receipt.address}")
     print(f"  tx          {receipt.tx_hash}")
