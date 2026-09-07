@@ -59,11 +59,14 @@ def test_a_different_person_gets_a_new_face_id(tmp_path):
 
 
 def test_ids_increment_and_do_not_reuse_a_deleted_number(tmp_path):
+    """A retired label must never be handed to a different face: an evidence bundle
+    citing F-002 would silently come to mean someone else."""
     reg = registry(tmp_path)
     reg.observe(vec(1.0), "a", cosine_stub)
     reg.observe(vec(2.0), "b", cosine_stub)
     reg.faces = [f for f in reg.faces if f.face_id != "F-002"]
-    assert reg.next_id() == "F-002"  # highest remaining is F-001
+    reg.save()
+    assert reg.next_id() == "F-003"
 
 
 # --------------------------------------------------------------- same person
@@ -253,3 +256,82 @@ def test_real_faces_same_person_matches_different_person_does_not(tmp_path):
         decision = reg.observe(scan.embedding, scan.image_sha256, encoder.cosine)
         assert decision.created is True, f"{name} was wrongly merged into an existing id"
         assert decision.status != F.MATCH
+
+
+# ---------------------------------------------------- repairing a split identity
+
+def test_merge_folds_every_photograph_into_the_kept_face(tmp_path):
+    """A threshold set too high splits one person across several ids. Lowering it
+    afterwards does not repair a registry that already recorded the mistake."""
+    reg = registry(tmp_path, high=0.9)          # too high: they will not be merged
+    reg.observe(vec(1.0), "hash-a", cosine_stub)
+    reg.observe(vec(2.0), "hash-b", cosine_stub)
+    assert [f.face_id for f in reg.faces] == ["F-001", "F-002"]
+
+    merged = reg.merge("F-001", "F-002")
+
+    assert [f.face_id for f in reg.faces] == ["F-001"]
+    assert merged.photo_count == 2
+    assert {s.image_sha256 for s in merged.sightings} == {"hash-a", "hash-b"}
+
+
+def test_merge_does_not_duplicate_a_shared_photograph(tmp_path):
+    reg = registry(tmp_path, high=0.9)
+    reg.observe(vec(1.0), "shared", cosine_stub)
+    reg.observe(vec(2.0), "other", cosine_stub)
+    reg.get("F-002").sightings.append(
+        F.Sighting(image_sha256="shared", embedding=vec(1.0), added_at="now"))
+
+    merged = reg.merge("F-001", "F-002")
+    assert [s.image_sha256 for s in merged.sightings].count("shared") == 1
+
+
+def test_a_merged_away_id_is_never_issued_again(tmp_path):
+    """An evidence bundle citing F-002 must not silently come to mean another face."""
+    reg = registry(tmp_path, high=0.9)
+    reg.observe(vec(1.0), "a", cosine_stub)
+    reg.observe(vec(2.0), "b", cosine_stub)
+    reg.merge("F-001", "F-002")
+
+    assert reg.next_id() == "F-003"
+    d = reg.observe(vec(3.0), "c", cosine_stub)
+    assert d.face_id == "F-003"
+
+
+def test_the_high_water_mark_survives_a_restart(tmp_path):
+    path = tmp_path / "faceids.json"
+    reg = F.FaceRegistry(path=path, thresholds=F.Thresholds(high=0.9, review=0.05))
+    reg.observe(vec(1.0), "a", cosine_stub)
+    reg.observe(vec(2.0), "b", cosine_stub)
+    reg.merge("F-001", "F-002")
+
+    reopened = F.FaceRegistry(path=path)
+    assert reopened.next_id() == "F-003"
+
+
+def test_merging_an_unknown_or_identical_id_is_refused(tmp_path):
+    reg = registry(tmp_path)
+    reg.observe(vec(1.0), "a", cosine_stub)
+    for keep, absorb in (("F-001", "F-404"), ("F-404", "F-001"), ("F-001", "F-001")):
+        with pytest.raises(F.FaceIdError):
+            reg.merge(keep, absorb)
+
+
+# ------------------------------------------------ the defaults, after recalibration
+
+def test_the_default_thresholds_admit_a_real_world_same_person_score():
+    """0.66 split three photographs of one person that scored 0.6191-0.6417.
+
+    The bench set is studio portraiture and scores 0.79+, which is why calibrating on
+    it alone produced a threshold that failed on ordinary photographs.
+    """
+    t = F.Thresholds()
+    assert t.classify(0.6191) == F.MATCH
+    assert t.classify(0.6417) == F.MATCH
+
+
+def test_the_default_thresholds_still_reject_the_worst_different_person_pair():
+    """The highest different-person score observed on real photographs was 0.3326."""
+    t = F.Thresholds()
+    assert t.classify(0.3326) == F.NO_MATCH
+    assert F.DEFAULT_REVIEW_THRESHOLD > 0.3326

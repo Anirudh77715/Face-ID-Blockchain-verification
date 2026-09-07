@@ -3,6 +3,7 @@
     py faceids.py list                     every Face ID, with photo counts
     py faceids.py show F-001               one Face ID in detail
     py faceids.py check --image photo.jpg  what would this photo match? (reads only)
+    py faceids.py merge F-004 F-005        fold F-005 into F-004 (same person, split)
     py faceids.py forget F-002 --yes       delete one Face ID and its embeddings
 
 A Face ID is an anonymous label - `F-001` means "the face first seen in that run" and
@@ -120,6 +121,32 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_merge(args) -> int:
+    """Fold one Face ID into another after a human has compared the photographs."""
+    reg = registry_for(args)
+    keep, absorb = reg.get(args.keep), reg.get(args.absorb)
+    if not keep or not absorb:
+        print(f"no such face id: {args.keep if not keep else args.absorb}",
+              file=sys.stderr)
+        return 1
+
+    print(f"{args.keep}  {keep.photo_count} photo(s)")
+    print(f"{args.absorb}  {absorb.photo_count} photo(s)  -> folded into {args.keep}")
+    if not args.yes:
+        print(f"\n{DIM}Re-run with --yes to merge. Check both sets first with")
+        print(f"  py faceids.py show {args.keep}")
+        print(f"  py faceids.py show {args.absorb}{OFF}")
+        return 1
+
+    merged = reg.merge(args.keep, args.absorb)
+    print(f"\n{GREEN}merged{OFF} - {merged.face_id} now holds "
+          f"{merged.photo_count} photo(s)")
+    print(f"{DIM}{args.absorb} is retired and will not be issued again. Evidence")
+    print("bundles and chain records are untouched: they recorded what was found")
+    print(f"at the time, and that history is not rewritten by a later correction.{OFF}")
+    return 0
+
+
 def cmd_forget(args) -> int:
     reg = registry_for(args)
     face = reg.get(args.face_id)
@@ -154,6 +181,11 @@ def main() -> int:
     check = sub.add_parser("check", help="score a photo without recording it")
     check.add_argument("--image", required=True, help="a path or an image URL")
 
+    merge = sub.add_parser("merge", help="fold one Face ID into another")
+    merge.add_argument("keep", help="the Face ID to keep")
+    merge.add_argument("absorb", help="the Face ID to fold into it")
+    merge.add_argument("--yes", action="store_true")
+
     forget = sub.add_parser("forget", help="delete a Face ID")
     forget.add_argument("face_id")
     forget.add_argument("--yes", action="store_true")
@@ -161,7 +193,7 @@ def main() -> int:
     args = ap.parse_args()
     return {
         "list": cmd_list, "show": cmd_show,
-        "check": cmd_check, "forget": cmd_forget,
+        "check": cmd_check, "merge": cmd_merge, "forget": cmd_forget,
     }[args.command](args)
 
 

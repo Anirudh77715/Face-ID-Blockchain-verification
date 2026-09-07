@@ -26,15 +26,29 @@ of the query photo. Persistent identity is a harder question asked against every
 the registry, and a false merge collapses two people into one identifier - so it gets its
 own, higher thresholds.
 
-The defaults below come from `scripts/calibrate_faceid.py` over `bench/faces`: 12 images,
-8 people, 10 same-person pairs spanning different photographs. On that set same-person
-similarity ran 0.7876-0.9562 and the highest different-person pair was 0.2768. The
-defaults sit inside that gap.
+The defaults were derived from two measurements, and the second one corrected the first.
 
-**That set is far too small to support a false-match rate**, and it is one identity's
-photographs against seven single-photo identities. Treat 0.66/0.40 as provisional
-defaults chosen from measurement rather than authoritative values, and re-measure on your
-own data before relying on them. Both are configurable - see `Thresholds`.
+`scripts/calibrate_faceid.py` over `bench/faces` (12 images, 8 people) gives same-person
+0.7876-0.9562 and different-person at most 0.2768. That set is historical studio
+portraiture: frontal, evenly lit, and unusually easy. Calibrating on it alone produced a
+0.66 threshold that **failed on real photographs** - three uploads of one person scored
+0.6191, 0.6400 and 0.6417 against each other, landed under 0.66, and were registered as
+three separate identities. The threshold was right for the benchmark and wrong for the
+job.
+
+Re-measured against ordinary photographs (varied pose, lighting, crop and resolution):
+
+    same person, lowest observed        0.6191
+    different people, highest observed  0.3326
+
+0.50 sits inside that gap with roughly 0.17 of headroom above the worst different-person
+pair and 0.12 below the worst same-person pair. The review floor moved to 0.35 to sit
+just above the observed different-person ceiling.
+
+**Neither number is authoritative.** They come from tens of comparisons, not thousands,
+and cannot support a quoted false-match rate. Lighting, pose, age gap and demographic
+coverage all move them. Re-measure on your own data; both are configurable - see
+`Thresholds`.
 """
 
 from __future__ import annotations
@@ -53,8 +67,8 @@ REGISTRY_VERSION = 1
 # Provisional defaults - see the module docstring for how they were measured and why
 # they are not authoritative. Override per-run with --faceid-high / --faceid-review, or
 # for a whole environment with POM_FACEID_HIGH / POM_FACEID_REVIEW.
-DEFAULT_HIGH_CONFIDENCE_THRESHOLD = 0.66
-DEFAULT_REVIEW_THRESHOLD = 0.40
+DEFAULT_HIGH_CONFIDENCE_THRESHOLD = 0.50
+DEFAULT_REVIEW_THRESHOLD = 0.35
 
 MATCH = "match"
 REVIEW = "review"
@@ -218,6 +232,10 @@ class FaceRegistry:
         self.path = Path(path)
         self.thresholds = thresholds or Thresholds()
         self.faces: list[FaceRecord] = []
+        # The highest Face ID number ever issued, including ids since merged away. Kept
+        # so a retired label is never handed to a different face - an old evidence bundle
+        # citing F-005 must not come to mean someone else.
+        self._high_water = 0
         self.load()
 
     # ------------------------------------------------------------- persistence
@@ -231,6 +249,7 @@ class FaceRegistry:
         except (OSError, json.JSONDecodeError) as e:
             raise FaceIdError(f"face registry is unreadable: {self.path}\n  {e}") from e
 
+        self._high_water = int(raw.get("high_water", 0))
         self.faces = [
             FaceRecord(
                 face_id=f["face_id"],
@@ -243,9 +262,11 @@ class FaceRegistry:
 
     def save(self) -> Path:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._high_water = self._highest_issued()
         body = {
             "version": REGISTRY_VERSION,
             "updated_at": _now(),
+            "high_water": self._high_water,
             "faces": [
                 {
                     "face_id": f.face_id,
@@ -267,14 +288,18 @@ class FaceRegistry:
     def get(self, face_id: str) -> FaceRecord | None:
         return next((f for f in self.faces if f.face_id == face_id), None)
 
-    def next_id(self) -> str:
-        used = []
+    def _highest_issued(self) -> int:
+        numbers = [self._high_water]
         for f in self.faces:
             try:
-                used.append(int(f.face_id.split("-")[1]))
+                numbers.append(int(f.face_id.split("-")[1]))
             except (IndexError, ValueError):
                 continue
-        return f"F-{(max(used) + 1) if used else 1:03d}"
+        return max(numbers)
+
+    def next_id(self) -> str:
+        """One past the highest number ever issued, retired ids included."""
+        return f"F-{self._highest_issued() + 1:03d}"
 
     def score(self, embedding, similarity: Similarity) -> list[tuple[str, float]]:
         """Every Face ID scored against this embedding, best first.
@@ -364,6 +389,34 @@ class FaceRegistry:
             created=True,
             ranked=decision.ranked,
         )
+
+    def merge(self, keep: str, absorb: str) -> FaceRecord:
+        """Fold one Face ID into another, keeping every photograph.
+
+        A threshold set too high splits one person across several Face IDs, and lowering
+        it afterwards does not repair a registry that already recorded the mistake. This
+        does.
+
+        Merging stays manual on purpose. The matcher will not join two identities on its
+        own below the match threshold, because a wrong merge cannot be undone by looking
+        at more photographs - but a person who can see both sets of photographs can say
+        so, and that is a different kind of evidence.
+        """
+        target, source = self.get(keep), self.get(absorb)
+        if target is None:
+            raise FaceIdError(f"no such face id: {keep}")
+        if source is None:
+            raise FaceIdError(f"no such face id: {absorb}")
+        if keep == absorb:
+            raise FaceIdError("cannot merge a face id into itself")
+
+        known = {s.image_sha256 for s in target.sightings}
+        target.sightings.extend(s for s in source.sightings
+                                if s.image_sha256 not in known)
+        target.sightings.sort(key=lambda s: s.added_at)
+        self.faces = [f for f in self.faces if f.face_id != absorb]
+        self.save()
+        return target
 
     def attach_attestation(self, face_id: str, image_sha256: str,
                            attestation: dict) -> bool:

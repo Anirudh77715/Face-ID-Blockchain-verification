@@ -388,6 +388,7 @@ py run.py --image photo.jpg --chain local        # Face ID runs as stage 1c
 py faceids.py list                               # every Face ID
 py faceids.py show F-001                         # its photographs and attestations
 py faceids.py check --image other.jpg            # score a photo, record nothing
+py faceids.py merge F-004 F-005 --yes            # one person split across two ids
 ```
 
 A Face ID is an anonymous label - `F-001` means "the face first seen in that run". **The
@@ -417,9 +418,9 @@ the registry, and a false merge collapses two people into one identifier.
 
 | state | condition | what happens |
 |---|---|---|
-| MATCH | `similarity >= high` (0.66) | the photo joins the existing Face ID |
+| MATCH | `similarity >= high` (0.50) | the photo joins the existing Face ID |
 | REVIEW | `review <= similarity < high` | flagged, and a **new** Face ID is created |
-| NO MATCH | `similarity < review` (0.40) | a new Face ID is created |
+| NO MATCH | `similarity < review` (0.35) | a new Face ID is created |
 
 Configurable three ways - flag beats environment beats default:
 
@@ -428,17 +429,56 @@ py run.py --image a.jpg --faceid-high 0.72 --faceid-review 0.45
 POM_FACEID_HIGH=0.72  POM_FACEID_REVIEW=0.45
 ```
 
-Where the defaults came from - `py scripts/calibrate_faceid.py` over `bench/faces`:
+Where the defaults came from, and how they were corrected.
+
+`py scripts/calibrate_faceid.py` over `bench/faces` gives:
 
 ```
 images 12   people 8
 SAME PERSON, different photograph (10 pairs)   0.7876 .. 0.9562
 DIFFERENT PEOPLE (56 pairs)                    highest 0.2768
-separation                                     +0.5108
 ```
 
-**These are provisional defaults measured on a 12-image set, not authoritative values.**
-See Known limitations.
+That set is historical studio portraiture - frontal, evenly lit, unusually easy - and
+calibrating on it alone produced `high = 0.66`, which **failed on real photographs**.
+Three uploads of one person scored 0.6191, 0.6400 and 0.6417 against each other, fell
+below 0.66 into REVIEW, and were registered as three separate identities. The threshold
+was right for the benchmark and wrong for the job.
+
+Re-measured on ordinary photographs (varied pose, lighting, crop, resolution):
+
+```
+same person, lowest observed         0.6191
+different people, highest observed   0.3326
+```
+
+`high = 0.50` sits in that gap with ~0.17 of headroom above the worst different-person
+pair and ~0.12 below the worst same-person pair. `review` moved to 0.35, just above the
+observed different-person ceiling.
+
+**Still provisional.** Tens of comparisons, not thousands - no false-match rate can be
+quoted from this. See Known limitations.
+
+### When one person ends up with several Face IDs
+
+Lowering a threshold does not repair a registry that already recorded the split, so ids
+can be folded together after the fact:
+
+```bash
+py faceids.py show F-004          # look at both sets of photographs first
+py faceids.py show F-005
+py faceids.py merge F-004 F-005 --yes
+```
+
+Every photograph moves to the kept id. The absorbed label is **retired, never re-issued** -
+an evidence bundle citing `F-005` must not silently come to mean a different face later.
+Bundles and chain records are untouched: they recorded what was found at the time, and a
+later correction does not rewrite that history.
+
+Merging is deliberately manual. The matcher will not join two identities on its own below
+`high`, because a wrong merge cannot be undone by looking at more photographs - but a
+person who can see both sets of photographs is bringing evidence the matcher does not
+have.
 
 ### Storage
 
@@ -742,11 +782,15 @@ This is reported as `already attested` with the original transaction recovered f
 event log, not as a failure - verification of that bundle still succeeds. For a fresh
 transaction, redeploy or use a different image.
 
-**Face ID thresholds are provisional.** 0.66 and 0.40 were measured on 12 images of 8
-people, where the same-person pairs are one identity's photographs and the other seven
-contribute a single photo each. That set shows a clean 0.51 separation, but it **cannot
-support a false-match rate** and it is not diverse in age, lighting, pose or demographics.
-Re-measure on your own data before relying on these numbers.
+**Face ID thresholds are provisional, and the first attempt was wrong.** 0.66 was
+measured on `bench/faces` - 12 images, 8 people, all studio portraiture - and split three
+photographs of one real person into three identities because they scored 0.62-0.64. The
+defaults are now 0.50 and 0.35, chosen from a gap observed between 0.3326 (worst
+different-person) and 0.6191 (worst same-person) on ordinary photographs. That is still
+tens of comparisons, not thousands: it **cannot support a false-match rate**, and it is
+not diverse in age, lighting, pose or demographics. Re-measure on your own data. The
+lesson generalises - a threshold calibrated on easy images will look excellent and fail
+on the images you actually have.
 
 **Face ID false-positive and false-negative risks, concretely.** A false merge (two people
 under one Face ID) is the damaging error and more photographs cannot undo it, because the
