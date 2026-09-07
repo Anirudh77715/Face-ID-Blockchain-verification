@@ -18,24 +18,146 @@ py verify.py --bundle evidence/run-*.json          # VERIFIED
 py verify.py --bundle evidence/run-*.json          # TAMPERED: candidate[1]
 ```
 
-## Quickstart
+## Setup
 
-Python 3.12 and Node 22. No wallet, no faucet, no API key.
+**No wallet, no faucet, no API key, and no compiler.** Everything below is prebuilt
+wheels and one npm package. Budget about **10 minutes**, most of it downloading.
+
+### What you need first
+
+| | Version | Check with |
+|---|---|---|
+| Python | **3.10 or newer** (3.12 is what this was built on) | `python3 --version` |
+| Node.js | **20 or newer** (22 recommended) | `node --version` |
+| Disk | ~700 MB | models 39 MB, Chromium ~150 MB, node_modules ~400 MB |
+
+Nothing else. No CMake, no MSVC, no Xcode command line tools - the face models ship as
+ONNX inside `opencv-python`, which is the whole reason this project avoids
+dlib / `face_recognition`.
+
+### macOS (Apple Silicon or Intel)
 
 ```bash
+brew install python@3.12 node          # skip either if you already have it
+git clone <your repo url> proof-of-match
+cd proof-of-match
+
+python3 -m venv .venv
+source .venv/bin/activate
+
 pip install -r requirements.txt
 python -m playwright install chromium
-py scripts/fetch_models.py          # 39 MB of ONNX weights, SHA-256 verified
+python scripts/fetch_models.py         # 39 MB of ONNX weights, SHA-256 verified
 
-npm install                         # hardhat only
+npm install                            # hardhat only
 npx hardhat compile
-npx hardhat node                    # leave running in another terminal
-
-py deploy.py --chain local
-py preflight.py                     # verify the whole setup before you rely on it
-py run.py    --image path/to/face.jpg --chain local     # or an image URL
-py verify.py --bundle evidence/run-<id>.json --chain local
 ```
+
+**One macOS version check before you start.** OpenCV 5.0 ships prebuilt wheels for
+`macosx_13_0_arm64` and `macosx_14_0_x86_64` - so **Apple Silicon needs macOS 13+, Intel
+needs macOS 14+**. Below those, pip falls back to the source tarball and tries to compile
+OpenCV, which takes the better part of an hour and usually fails. `sw_vers` tells you your
+version. On an older macOS, use a machine that meets the floor rather than fighting the
+build.
+
+On macOS every command below written as `py` is `python`.
+
+### Windows
+
+```powershell
+winget install Python.Python.3.12 OpenJS.NodeJS      # skip either if you have it
+git clone <your repo url> proof-of-match
+cd proof-of-match
+
+py -m venv .venv
+.venv\Scripts\activate
+
+pip install -r requirements.txt
+py -m playwright install chromium
+py scripts/fetch_models.py
+
+npm install
+npx hardhat compile
+```
+
+`py` is the Windows Python launcher and comes with the installer.
+
+### Then, on either platform
+
+You need **two terminals**. The chain runs in the foreground and stays running.
+
+Terminal 1 - the local blockchain, left alone:
+
+```bash
+npx hardhat node
+```
+
+Terminal 2 - everything else (activate the venv here too):
+
+```bash
+py deploy.py --chain local
+py preflight.py                    # 13 checks; run this before you trust anything
+py run.py --image path/to/face.jpg --chain local        # a path or an image URL
+py verify.py --bundle evidence/run-<id>.json --chain local
+py verify.py --bundle evidence/run-<id>.json --chain local --refetch
+```
+
+`preflight.py` is the fastest way to find out whether the setup is sound: it checks the
+Python version, every import, both model files by SHA-256, that a face actually detects,
+that Chromium launches, that the search parser works, and that the chain is reachable. If
+it prints `all required checks passed`, everything else in this README will work.
+
+The last line downloads the discovered post again, hashes it again, and compares that
+against the hash the chain holds - the strongest form of the re-verification the task asks
+for.
+
+### Optional web console
+
+If you would rather drop a photo in a browser than type a path:
+
+```bash
+py server.py                       # then open http://127.0.0.1:8000
+```
+
+It adds nothing to the pipeline - it spawns `run.py` and `verify.py` and streams their real
+output - so the command line stays the source of truth. Open it at
+`http://127.0.0.1:8000`, **not** by double-clicking `server_page.html`: from a `file://`
+origin the browser blocks its own API calls and every button silently does nothing.
+
+### Credentials - all optional
+
+`cp .env.example .env` only if you want one of two things. Neither is needed for anything
+in this README:
+
+- `SERPAPI_KEY` - a fallback search backend, free tier 100/month. The no-key backends are
+  the default and in practice the more reliable path.
+- `PRIVATE_KEY` - only for `--chain sepolia`. **Use a burner funded from a faucet.**
+  `--chain local` needs no wallet at all.
+
+`.env` is gitignored. `preflight.py` reports whether a key is present and its length, never
+its value.
+
+### If something goes wrong
+
+| Symptom | Cause |
+|---|---|
+| `cannot reach the local RPC` | `npx hardhat node` is not running, or is in a terminal you closed |
+| pip starts *building* opencv | macOS below the version floor above, or a 32-bit Python |
+| `missing model: models/yunet.onnx` | `scripts/fetch_models.py` has not been run |
+| `no face detected` on a big photo | genuinely no face - detection already retries down a scale ladder |
+| search exits 3 | the provider served a bot challenge. Wait, or pass `--image-url`. No CAPTCHA is bypassed, by design |
+| verify says the contract holds no attestations | the chain was restarted, which wipes it. Re-run the pipeline |
+| web console buttons do nothing | you opened the HTML file directly instead of `http://127.0.0.1:8000` |
+
+### Reproducing without a network
+
+```bash
+py run.py --image spike/control_small.jpg --offline
+```
+
+Replays a saved search against cached images, so the whole pipeline runs unplugged. The
+bundle records `provider=replay` in its Merkle leaves, so a replayed run is permanently
+self-labelled and can never be presented as a live result.
 
 ## The three stages
 
@@ -203,6 +325,122 @@ py verify.py --bundle evidence/run-<id>.json --disclose 1
 `AttestationRegistry.verifyInclusion` checks that on chain with sorted-pair hashing,
 matching OpenZeppelin's `MerkleProof` (inlined, to keep the repo npm-light).
 
+### Two different questions
+
+Checking the bundle proves the **evidence file** has not been altered since it was
+committed. It does not prove the **post** is still what it was. `--refetch` answers the
+second question by downloading the discovered post again, hashing it again, and comparing
+that against the hash the chain holds:
+
+```
+py verify.py --bundle evidence/run-<id>.json --chain local --refetch
+
+  current post hash   ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+                      SHA-256 of the 57640 bytes just downloaded
+  attested post hash  ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+                      committed at run time as part of candidate[7]
+  on chain            that record is proved present in root 0xbdd05eeb83da7429...
+                      by an inclusion proof of 4 sibling hashes, checked
+                      by the contract itself
+
+  POST UNCHANGED - the live post still hashes to what is on chain
+```
+
+The cache is bypassed on purpose: `pom/cache.py` stores the very bytes that were hashed
+during the run, so reading them back would compare a digest against itself and always
+agree.
+
+A mismatch here is **not** tampering, and is reported as its own outcome (exit 9). A post
+can be deleted, edited by its author, or served re-encoded by a CDN that never touched the
+pixels — all change the hash with nobody acting in bad faith. Exit 6 stays reserved for
+evidence that no longer matches its own commitment.
+
+## Persistent Face ID
+
+An added layer, not part of the task's required pipeline, and it changes none of it. It
+answers a question the rest of the project deliberately does not: **have we seen this face
+before?**
+
+```
+py run.py --image photo.jpg --chain local        # Face ID runs as stage 1c
+py faceids.py list                               # every Face ID
+py faceids.py show F-001                         # its photographs and attestations
+py faceids.py check --image other.jpg            # score a photo, record nothing
+```
+
+A Face ID is an anonymous label - `F-001` means "the face first seen in that run". **The
+registry stores no names and infers none.** A hit is reported as *"matches Face ID F-001"*
+or *"likely the same face"*, never as an identity. Nothing in this project verifies who
+anyone is, so no output claims to.
+
+### Three mechanisms, three questions
+
+They are easy to conflate and the code keeps them apart:
+
+| | answers | used for identity? |
+|---|---|---|
+| image SHA-256 | is this the same *file*? | **no** |
+| face embedding | is this likely the same *face*? | yes, as evidence |
+| Merkle root on chain | does the evidence still match its commitment? | **no** |
+
+Two photographs of one person have different image hashes. That is expected, and the image
+hash is never consulted to decide whether two photos show the same person.
+
+### Thresholds
+
+Persistent identity is a **separate calibration problem** from web-candidate matching, and
+gets its own values. The candidate threshold (0.363) compares a returned image against the
+query, where candidates are near-duplicates. A Face ID lookup runs against every face in
+the registry, and a false merge collapses two people into one identifier.
+
+| state | condition | what happens |
+|---|---|---|
+| MATCH | `similarity >= high` (0.66) | the photo joins the existing Face ID |
+| REVIEW | `review <= similarity < high` | flagged, and a **new** Face ID is created |
+| NO MATCH | `similarity < review` (0.40) | a new Face ID is created |
+
+Configurable three ways - flag beats environment beats default:
+
+```bash
+py run.py --image a.jpg --faceid-high 0.72 --faceid-review 0.45
+POM_FACEID_HIGH=0.72  POM_FACEID_REVIEW=0.45
+```
+
+Where the defaults came from - `py scripts/calibrate_faceid.py` over `bench/faces`:
+
+```
+images 12   people 8
+SAME PERSON, different photograph (10 pairs)   0.7876 .. 0.9562
+DIFFERENT PEOPLE (56 pairs)                    highest 0.2768
+separation                                     +0.5108
+```
+
+**These are provisional defaults measured on a 12-image set, not authoritative values.**
+See Known limitations.
+
+### Storage
+
+`evidence/faceids.json`, local and gitignored. Per Face ID: a created timestamp and one
+entry per photograph holding the image SHA-256, the 128-d embedding, and a reference to the
+attestation if the run reached a chain.
+
+**No biometric data goes on chain.** The embedding stays in that file. What the chain sees
+is the evidence Merkle root, which includes `query.embedding_sha256` and a `faceid` leaf
+recording the Face ID and similarity - hashes of the representation, never the
+representation.
+
+### Multiple photographs per face
+
+A Face ID accumulates embeddings rather than being judged forever by its first photograph.
+A new photo is scored against **every** stored embedding and the face takes its **maximum**
+- a face matches if the new photo resembles *any* photograph recorded for it. The mean was
+rejected because it punishes a well-documented face: each extra sighting drags the average
+down, so the more photographs a face has the harder it becomes to recognise, which is
+backwards. The cost of the maximum is that one bad sighting can pull a stranger in, which
+is what REVIEW is for.
+
+Re-scanning an identical file adds no sighting - the same bytes carry no new information.
+
 ## Which blockchain
 
 Both, from one code path in `pom/chain.py`:
@@ -296,6 +534,7 @@ it can find other pictures of you, not only reposts of that one file.
 | 6 | `verify.py`: the evidence no longer matches what was committed |
 | 7 | `verify.py`: the root is not on chain at all |
 | 8 | `verify.py`: **NOT RELIABLE** — evidence intact, but revoked or consent does not hold |
+| 9 | `verify.py --refetch`: evidence intact, but the live post no longer hashes to what was attested |
 
 Exit 2 matters. A run that finds nothing leaves no attestation behind — the record is for
 matches, not for attempts.
@@ -481,6 +720,24 @@ This is reported as `already attested` with the original transaction recovered f
 event log, not as a failure - verification of that bundle still succeeds. For a fresh
 transaction, redeploy or use a different image.
 
+**Face ID thresholds are provisional.** 0.66 and 0.40 were measured on 12 images of 8
+people, where the same-person pairs are one identity's photographs and the other seven
+contribute a single photo each. That set shows a clean 0.51 separation, but it **cannot
+support a false-match rate** and it is not diverse in age, lighting, pose or demographics.
+Re-measure on your own data before relying on these numbers.
+
+**Face ID false-positive and false-negative risks, concretely.** A false merge (two people
+under one Face ID) is the damaging error and more photographs cannot undo it, because the
+wrong embedding is now part of the face. Raising `high` makes it rarer at the cost of more
+duplicate Face IDs, which are cheap. Expect false *negatives* - a new Face ID for someone
+already registered - whenever a photo differs sharply in pose, age, lighting or occlusion
+from everything on record; SFace is a 128-d model and this is where a 512-d ArcFace would
+help. Identical twins, and near-duplicate crops of one photograph, are both beyond what any
+embedding threshold can settle.
+
+**A Face ID is not an identity.** It says two photographs likely show the same face. It
+does not establish a name, and nothing in this project verifies real-world identity.
+
 **Consent.** Run this on your own face, or on faces whose owners agreed. It is a
 face-to-social-media pipeline writing to an immutable ledger; that is worth being
 deliberate about, which is also why only hashes go on chain.
@@ -489,11 +746,19 @@ deliberate about, which is also why only hashes go on chain.
 
 ```
 run.py                  end-to-end pipeline
-verify.py               re-verification, tamper detection, selective disclosure
+verify.py               re-verification, re-fetch, tamper detection, disclosure
+server.py               optional local web console over run.py and verify.py
+server_page.html        its interface
+faceids.py              inspect the Face ID registry; check a photo against it
+pom/faceid.py           persistent anonymous Face IDs, thresholds, registry
 deploy.py               contract deployment
+pom/source.py           resolve the input image from a path or an http(s) URL
 pom/face.py             YuNet detect -> SFace 128-d embed, scale ladder
-pom/search.py           adapter: bing_scripted | serpapi | replay
+pom/search.py           adapter: auto | bing_url | yandex_url | bing_scripted |
+                                 serpapi | replay
 pom/match.py            re-download, re-embed, cosine vs threshold
+pom/refetch.py          fetch the discovered post again and re-hash it
+pom/cache.py            content-addressed image cache; enables --offline
 pom/evidence.py         bundle assembly, leaf derivation, field-level diff
 pom/merkle.py           keccak256 sorted-pair tree, root + inclusion proofs
 pom/chain.py            web3: deploy, record, read back, verify inclusion
@@ -506,7 +771,8 @@ preflight.py            setup and recording sanity checks
 viewer.py               optional local read-only evidence viewer
 viewer_page.html        its interface
 pom/consent.py          consent signing and verification
-tests/                  171 tests, tiered by what they require
+scripts/calibrate_faceid.py  measure the Face ID thresholds
+tests/                  326 tests, tiered by what they require
 spike/FINDINGS.md       day-1 search viability study
 ```
 

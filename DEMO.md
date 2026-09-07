@@ -118,6 +118,71 @@ py verify.py --bundle evidence/run-<id>.json --chain local
 All fields match, roots agree, root found on chain, **VERIFIED**. Say plainly: this is the
 data coming back *off* the chain, not just going on.
 
+### 5b — Fetch the post again and re-hash it
+
+This is the shape the task's own example asks for, so film it.
+
+```bash
+py verify.py --bundle evidence/run-<id>.json --chain local --refetch
+```
+
+```
+current post hash   ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+attested post hash  ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+on chain            that record is proved present in root 0xbdd05eeb83da7429...
+POST UNCHANGED
+```
+
+Two sentences worth saying out loud while it is on screen:
+
+- The post was **downloaded again just now** — the cache is bypassed, so this is not a
+  digest being compared against itself.
+- The attested hash is not merely read out of the local file; the record containing it is
+  **proved to be inside the root the contract holds**, by an inclusion proof the contract
+  itself checks.
+
+If a post 404s or a CDN blocks the hotlink, this reports **unreachable** and stays exit 0.
+That is not a failure — it is the check refusing to call a missing post a forged one.
+
+### 5c — Persistent Face ID (optional layer, films in about a minute)
+
+Four steps, in this order. Start from a clean registry if you want F-001 to be the first
+id on screen: `py faceids.py list` shows what is already there.
+
+```bash
+py run.py --image bench/faces/einstein-0.jpg --offline      # 1: new face
+py run.py --image bench/faces/einstein-x1.jpg --offline     # 2: same person, new file
+py run.py --image bench/faces/curie-0.jpg --offline         # 3: different person
+py faceids.py list
+```
+
+What to point at on screen:
+
+1. **NEW FACE REGISTERED - F-001.** The registry was empty, so there is no similarity to
+   report.
+2. **MATCH FOUND - F-001, similarity 0.9386.** Say the important part out loud: the image
+   SHA-256 is *different* (`ce1d7bb0...` vs `d45ce90a...`) and the embedding is different.
+   The match is on the face, not the file. Photos on record goes 1 -> 2.
+3. **similarity 0.2315, below the 0.40 review floor -> F-002.** A different person gets a
+   different id rather than being merged.
+4. `faceids.py list` shows F-001 with 2 photographs and F-002 with 1.
+
+Then show it does not weaken anything (this is step 6 on a bundle that carries a Face ID):
+
+```bash
+py verify.py --bundle evidence/run-<id>.json --chain local --refetch
+```
+
+Edit `"face_id"` inside the bundle's `faceid` block and re-verify: **TAMPERED, naming
+`faceid`, exit 6.** The Face ID is committed like every other field.
+
+Two sentences worth saying, because a judge will otherwise ask:
+
+- F-001 is an **anonymous label**. It is not a name, and nothing here claims to know who
+  anyone is.
+- The Face ID thresholds are **separate** from the 0.363 candidate threshold and were
+  measured for this job - `py scripts/calibrate_faceid.py` prints the measurement.
+
 ### 6 — Break it (the point of the build)
 
 Open the bundle in an editor, on camera. Change one character of a candidate URL. Save.

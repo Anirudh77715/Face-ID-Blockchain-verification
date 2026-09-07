@@ -107,6 +107,23 @@ ROOTS DIFFER
                                                                 exit 6, TAMPERED
 ```
 
+Re-fetch the discovered post, hash it again, and compare against the chain — the
+"get the post again" form of re-verification, as distinct from checking the saved bundle:
+
+```bash
+py verify.py --bundle evidence/run-<id>.json --chain local --refetch
+```
+
+```
+current post hash   ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+attested post hash  ce63b6c6ccb841e8be28a19efb97085b3c2e380ec87823014313ab2d0ebb42cb
+on chain            that record is proved present in root 0xbdd05eeb83da7429...
+POST UNCHANGED                                                  exit 0, VERIFIED
+```
+
+A post that has changed or vanished since attestation exits 9, not 6 — a deleted post is
+not a forged one.
+
 Prove one field on chain without revealing the rest:
 
 ```bash
@@ -134,9 +151,17 @@ in `pom/chain.py`. Local needs no wallet, faucet or key, so this is reproducible
 
 ## 4. No website or hosting needed
 
-Nothing is hosted. `viewer.py` exists and is optional, read-only, and localhost-only — it
-draws the Merkle tree and runs verification as visible steps, but the pipeline is complete
-without it and never depends on it.
+Nothing is hosted, and nothing needs to be. Two optional local interfaces exist and the
+pipeline is complete without either:
+
+- `viewer.py` — read-only, localhost-only. Draws the Merkle tree and runs verification as
+  visible steps.
+- `server.py` — a localhost console for supplying a photo by file or by link. It spawns
+  `run.py` and `verify.py` as subprocesses and streams their real output, so it cannot
+  show a result the command line would not. It is bound to `127.0.0.1`.
+
+Neither is a project website, neither is deployed, and every requirement above is met from
+the command line alone.
 
 ## 5. Source on GitHub, with a README
 
@@ -146,9 +171,27 @@ skew in search coverage, the small calibration set, and that consent proves a *k
 not that the key belongs to the named person.
 
 ```bash
-py -m pytest        # 260 tests
+py -m pytest        # 294 tests: 291 pass, 3 skip without network
 py -m ruff check .
 ```
+
+## Beyond the requirements: Persistent Face ID
+
+Not required by the task, and it changes none of the six answers above - the pipeline runs
+identically with `--no-faceid`. It adds an anonymous, persistent Face ID so a second
+photograph of the same person is recognised as the same face:
+
+```bash
+py run.py --image bench/faces/einstein-0.jpg --offline    # NEW FACE REGISTERED - F-001
+py run.py --image bench/faces/einstein-x1.jpg --offline   # MATCH FOUND - F-001, 0.9386
+py run.py --image bench/faces/curie-0.jpg --offline       # 0.2315 -> NO MATCH, F-002
+```
+
+The second run has a different image SHA-256 and a different embedding; the match is on
+the face. Thresholds are calibrated separately from the 0.363 candidate threshold
+(`py scripts/calibrate_faceid.py`), embeddings stay off-chain in `evidence/faceids.json`,
+and the Face ID is committed as a Merkle leaf so altering it is caught like any other
+field. A Face ID is a label for a face, never a claim about a person's identity.
 
 ## 6. An unedited screen recording, end to end
 
