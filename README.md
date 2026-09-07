@@ -27,7 +27,7 @@ wheels and one npm package. Budget about **10 minutes**, most of it downloading.
 
 | | Version | Check with |
 |---|---|---|
-| Python | **3.10 or newer** (3.12 is what this was built on) | `python3 --version` |
+| Python | **3.10 or newer** (3.12 is what this was built on) | `py --version` on Windows, `python3 --version` on macOS |
 | Node.js | **20 or newer** (22 recommended) | `node --version` |
 | Disk | ~700 MB | models 39 MB, Chromium ~150 MB, node_modules ~400 MB |
 
@@ -39,8 +39,8 @@ dlib / `face_recognition`.
 
 ```bash
 brew install python@3.12 node          # skip either if you already have it
-git clone <your repo url> proof-of-match
-cd proof-of-match
+git clone https://github.com/Anirudh77715/Face-ID-Blockchain-verification.git
+cd Face-ID-Blockchain-verification
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -64,13 +64,17 @@ On macOS every command below written as `py` is `python`.
 
 ### Windows
 
+Open **PowerShell** (not cmd.exe) and run:
+
 ```powershell
-winget install Python.Python.3.12 OpenJS.NodeJS      # skip either if you have it
-git clone <your repo url> proof-of-match
-cd proof-of-match
+winget install Python.Python.3.12                    # skip if you have Python 3.10+
+winget install OpenJS.NodeJS                         # skip if you have Node 20+
+
+git clone https://github.com/Anirudh77715/Face-ID-Blockchain-verification.git
+cd Face-ID-Blockchain-verification
 
 py -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 py -m playwright install chromium
@@ -80,7 +84,23 @@ npm install
 npx hardhat compile
 ```
 
-`py` is the Windows Python launcher and comes with the installer.
+`py` is the Windows Python launcher; it ships with the official installer, which is why
+every command in this README uses it rather than `python`.
+
+**If activation fails with "running scripts is disabled on this system"**, that is
+PowerShell's execution policy, not a problem with this project. Allow local scripts for
+your own user once:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then run `.venv\Scripts\Activate.ps1` again. You will see `(.venv)` at the start of the
+prompt when it has worked. If you would rather change nothing, `cmd.exe` needs no policy
+change - activate with `.venv\Scripts\activate.bat` there instead.
+
+**Close and reopen PowerShell after installing Python or Node**, or `py` and `npm` will
+not be on PATH yet in the window you already had open.
 
 ### Then, on either platform
 
@@ -148,6 +168,8 @@ its value.
 | search exits 3 | the provider served a bot challenge. Wait, or pass `--image-url`. No CAPTCHA is bypassed, by design |
 | verify says the contract holds no attestations | the chain was restarted, which wipes it. Re-run the pipeline |
 | web console buttons do nothing | you opened the HTML file directly instead of `http://127.0.0.1:8000` |
+| `running scripts is disabled on this system` | PowerShell execution policy - see the Windows section above |
+| `py` or `npm` is not recognised | Python or Node was installed into a PowerShell window that is still open. Close it and open a new one |
 
 ### Reproducing without a network
 
